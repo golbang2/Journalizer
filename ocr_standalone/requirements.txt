@@ -1,0 +1,2 @@
+# 원본 OCR-Receipt-System과 같은 Vision SDK 버전
+google-cloud-vision==3.12.1

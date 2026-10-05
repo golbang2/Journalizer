@@ -35,6 +35,10 @@ Journalizer/
 
 ## Getting Started
 
+For a standalone receipt OCR experiment in Spyder, see
+[ocr_standalone/README.md](ocr_standalone/README.md). It uses the Google Vision
+OCR from OCR-Receipt-System independently of the web application.
+
 ### Frontend
 
 ```powershell

@@ -1,0 +1,8 @@
+# 인증 정보와 개인 영수증을 이 폴더에 두더라도 커밋하지 않습니다.
+*.json
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.webp
+.venv-verify/
