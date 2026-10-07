@@ -14,9 +14,9 @@ import unicodedata
 
 
 # %% 이 부분만 수정한 뒤 Spyder에서 F5로 실행하세요.
-IMAGE_PATH = r""  # 예: r"C:\Users\taeyoon\Pictures\영수증.jpg"
-CREDENTIALS_PATH = r""  # 예: r"C:\Users\taeyoon\Keys\vision-account.json"
-REPEAT = 1  # 처리 시간 비교용. 횟수만큼 실제 API를 호출합니다.
+IMAGE_PATH = str(Path(__file__).resolve().parents[1] / "test_data" / "IMG_4192.jpg")
+CREDENTIALS_PATH = r""  # 로컬에서 지정하거나 GOOGLE_APPLICATION_CREDENTIALS 사용.
+REPEAT = 1
 TIMEOUT_SECONDS = 60
 GROUND_TRUTH_PATH = r""  # 선택: 사람이 옮겨 적은 정답 텍스트(.txt, UTF-8)
 
