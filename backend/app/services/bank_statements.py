@@ -4,25 +4,20 @@ Supported layouts are found by their header row, not by bank name:
 - 우리은행 .xlsx: No. | 거래일시 | 적요 | 기재내용 | 지급(원) | 입금(원) | 거래후 잔액(원) ...
 - 광주은행 .xls: 거래일시 | 적요 | 거래구분 | 입/출금 | 출금 | 입금 | 통장잔액 ... (merged cells)
 
-The .xlsx reader parses sheet XML directly because some bank exports ship
-stylesheets that openpyxl refuses to load.
+Files are read through the bounded readers in spreadsheets.py.
 """
 from dataclasses import dataclass
 from datetime import datetime
 import hashlib
-import io
 import re
-import zipfile
-import xml.etree.ElementTree as ET
 
 from app.models import BankAccount, BankTransaction
+from app.services import spreadsheets
 
 
 class StatementParseError(ValueError):
     pass
 
-
-_NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 
 # Header label -> field. Order matters: "입/출금" must not be read as 출금.
 _COLUMNS = [
@@ -38,77 +33,21 @@ _COLUMNS = [
 ]
 
 
-def _column_index(ref: str) -> int:
-    index = 0
-    for char in re.match(r"[A-Z]+", ref).group():
-        index = index * 26 + ord(char) - 64
-    return index - 1
-
-
-def _xlsx_rows(content: bytes) -> list[list[str]]:
-    try:
-        archive = zipfile.ZipFile(io.BytesIO(content))
-        names = archive.namelist()
-        shared = []
-        if "xl/sharedStrings.xml" in names:
-            for si in ET.fromstring(archive.read("xl/sharedStrings.xml")).findall(f"{_NS}si"):
-                shared.append("".join(t.text or "" for t in si.iter(f"{_NS}t")))
-        sheet = next(n for n in sorted(names) if n.startswith("xl/worksheets/sheet") and n.endswith(".xml"))
-        root = ET.fromstring(archive.read(sheet))
-    except (zipfile.BadZipFile, StopIteration, ET.ParseError, KeyError) as exc:
-        raise StatementParseError("엑셀(.xlsx) 파일을 읽을 수 없습니다.") from exc
-    rows = []
-    for row in root.iter(f"{_NS}row"):
-        values: list[str] = []
-        for cell in row.findall(f"{_NS}c"):
-            col = _column_index(cell.get("r", "A1"))
-            raw = cell.find(f"{_NS}v")
-            text = raw.text if raw is not None and raw.text else ""
-            if cell.get("t") == "s" and text:
-                text = shared[int(text)]
-            elif cell.get("t") == "inlineStr":
-                text = "".join(t.text or "" for t in cell.iter(f"{_NS}t"))
-            values.extend([""] * (col + 1 - len(values)))
-            values[col] = text
-        rows.append(values)
-    return rows
-
-
-def _xls_rows(content: bytes) -> list[list[str]]:
-    import xlrd
-
-    try:
-        book = xlrd.open_workbook(file_contents=content)
-    except xlrd.XLRDError as exc:
-        raise StatementParseError("엑셀(.xls) 파일을 읽을 수 없습니다.") from exc
-    sheet = book.sheet_by_index(0)
-    rows = []
-    for i in range(sheet.nrows):
-        rows.append([
-            ("%d" % v if isinstance(v, float) and v.is_integer() else str(v)).strip()
-            for v in sheet.row_values(i)
-        ])
-    return rows
+def _xls_text(value) -> str:
+    return ("%d" % value if isinstance(value, float) and value.is_integer() else str(value)).strip()
 
 
 def _rows(filename: str, content: bytes) -> list[list[str]]:
     name = filename.lower()
-    if name.endswith(".xlsx"):
-        return _xlsx_rows(content)
-    if name.endswith(".xls"):
-        return _xls_rows(content)
-    if name.endswith(".csv"):
-        import csv
-
-        for encoding in ("utf-8-sig", "cp949"):
-            try:
-                text = content.decode(encoding)
-                break
-            except UnicodeDecodeError:
-                continue
-        else:
-            raise StatementParseError("CSV 인코딩을 확인할 수 없습니다.")
-        return [[c.strip() for c in row] for row in csv.reader(io.StringIO(text))]
+    try:
+        if name.endswith(".xlsx"):
+            return spreadsheets.xlsx_sheets(content, first_only=True)[0][1]
+        if name.endswith(".xls"):
+            return spreadsheets.xls_sheets(content, _xls_text, first_only=True)[0][1]
+        if name.endswith(".csv"):
+            return spreadsheets.csv_rows(content)
+    except spreadsheets.SpreadsheetError as exc:
+        raise StatementParseError(str(exc)) from exc
     raise StatementParseError("은행 거래내역은 .xlsx, .xls, .csv 파일만 지원합니다.")
 
 
@@ -276,3 +215,9 @@ def read_statement(filename: str, content: bytes) -> StatementInfo:
         product=_labelled(rows, "상품명"),
         transactions=transactions,
     )
+
+
+def schedule_table(filename: str, content: bytes, limit: int = 60_000) -> str:
+    """A spreadsheet as tab-separated text (non-empty rows only), cut to `limit` characters for the model."""
+    rows = _rows(filename, content)
+    return "\n".join("\t".join(row) for row in rows if any(c.strip() for c in row))[:limit]

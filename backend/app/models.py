@@ -25,6 +25,8 @@ class ReceiptExtraction(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     approval_number: str | None = None
     business_number: str | None = None
+    document_type: Literal["receipt", "tax_invoice"] = "receipt"
+    representative: str = ""
     extraction_provider: str | None = None
     field_evidence: dict[str, dict] = Field(default_factory=dict)
 
@@ -69,13 +71,15 @@ class Account(BaseModel):
     name: str
     normal: Literal["debit", "credit"]
     opening: int = 0
-    kind: Literal["asset", "liability", "expense", "other"] = "other"
+    kind: Literal["asset", "liability", "equity", "revenue", "expense", "other"] = "other"
 
 
 class Vendor(BaseModel):
     code: str = ""
     name: str = ""
     alias: str = ""
+    aliases: list[str] = Field(default_factory=list)
+    payment_aliases: list[str] = Field(default_factory=list)
     business: str = ""
     # Defaults learned from confirmed receipts (or set by hand) and prefilled on new ones.
     account: str = ""
@@ -92,12 +96,113 @@ class BankAccount(BaseModel):
     account: str = "10300"
 
 
+class Card(BaseModel):
+    """A company card. Statement rows starting with its number ("2462 스타벅스") are card purchases.
+
+    With `payable`, a purchase is booked through 미지급금 (expense / 미지급금, then 미지급금 / 보통예금).
+    A check card takes the money at once, so it books expense / 보통예금 directly (payable off).
+    """
+
+    code: str
+    name: str
+    number: str = ""
+    bank: str = ""  # bank account code the card settles from
+    payable: bool = False
+
+
+class CompanyProfile(BaseModel):
+    """What the registration documents say about the company; context for the AI's accounting judgment."""
+
+    company: str = ""
+    business_number: str = ""
+    representative: str = ""
+    opened: str = ""
+    business_type: str = ""  # 업태 · 종목
+    capital: int = 0
+    shareholders: list[str] = Field(default_factory=list)
+    officers: list[str] = Field(default_factory=list)
+    summary: str = ""
+    error: str = ""  # the documents could not be read; not retried until they change
+
+
 class Workspace(BaseModel):
+    profile: CompanyProfile | None = None
     company: str = ""
     year: str = str(date.today().year)
     accounts: list[Account]
     vendors: list[Vendor] = Field(default_factory=list)
     banks: list[BankAccount] = Field(default_factory=list)
+    cards: list[Card] = Field(default_factory=list)
+    # Card slips: "deduct" separates the deductible VAT into 부가세대급금, as the VAT return claims it;
+    # "expense" keeps it in the cost (only for a company that does not claim card-slip VAT).
+    card_vat: Literal["expense", "deduct"] = "deduct"
+    # Past bookings from an earlier year's ledger, used as examples for the AI's judgment.
+    precedents: list["Precedent"] = Field(default_factory=list)
+    precedent_source: str = ""
+    # Which LLM does the accounting judgment: "anthropic", "openai" or "gemini", and the model picked from its list.
+    ai_provider: str = "anthropic"
+    ai_model: str = ""
+
+
+class Precedent(BaseModel):
+    text: str  # 적요 or 거래처 as it appeared
+    account: str
+    count: int = 1
+
+
+class VatReturn(BaseModel):
+    """A filed 부가세 신고: offsets 부가세예수금 against 부가세대급금 and leaves the refund (미수금) or tax due (미지급세금)."""
+
+    id: str
+    period_start: str
+    period_end: str
+    filed: str  # date of the settlement entry (신고일)
+    output_tax: int = 0  # 매출세액
+    input_tax: int = 0  # 공제받은 매입세액
+    nondeductible_account: str = "83000"  # where VAT booked but not claimed goes
+    note: str = ""
+    schedule: list["ScheduleRow"] = Field(default_factory=list)  # 부속서류 rows, per supplier
+    schedule_file: str = ""
+
+
+class ScheduleRow(BaseModel):
+    """One supplier line of a filed 신용카드매출전표 수령명세서 or 매입처별 세금계산서합계표."""
+
+    kind: Literal["card", "invoice"] = "card"
+    business_number: str = ""
+    name: str = ""
+    count: int = 0
+    supply: int = 0
+    tax: int = 0
+
+
+class SalesInvoice(BaseModel):
+    """매출 세금계산서: 외상매출금 / 매출 + 부가세예수금 on the issue date; the customer's deposit collects it."""
+
+    id: str
+    file_name: str = ""
+    issued: str = ""
+    customer: str = ""
+    business_number: str = ""
+    representative: str = ""
+    item: str = ""
+    supply: int = 0
+    tax: int = 0
+    revenue_account: str = "41200"
+    note: str = ""
+
+
+class AiSuggestion(BaseModel):
+    """One accounting recommendation from the model. Shown highlighted until a person confirms it."""
+
+    account: str = ""
+    tax: int = 0
+    vendor: str = ""
+    purpose: str = ""
+    reason: str = ""
+    confidence: float = 0
+    model: str = ""
+    at: str = ""
 
 
 class ReceiptReview(BaseModel):
@@ -123,6 +228,8 @@ class ReceiptReview(BaseModel):
     payable_link: str | None = None
     evidence: str | None = None
     checked: bool | None = None
+    confirm_year: bool | None = None
+    confirm_vendor: bool | None = None
 
 
 class ReceiptRecord(BaseModel):
@@ -153,12 +260,16 @@ class ReceiptRecord(BaseModel):
     bank: str = ""
     payment_transaction_id: str = ""
     payment_link: str = ""
+    card: str = ""  # card code when the linked withdrawal is a card purchase
+    vat_checked: str = ""  # result of re-reading a corporate slip that showed 0 VAT
     payable_offset: int = 0
     payable_link: str = ""
     evidence: str = ""
     checked: bool = False
+    year_confirmed_for: str = ""
     confirmed: bool = False
     confirmed_at: str | None = None
+    ai: AiSuggestion | None = None
 
 
 class BankTransaction(BaseModel):
@@ -175,8 +286,44 @@ class BankTransaction(BaseModel):
     source_file: str = ""
 
 
+class BankEntry(BaseModel):
+    """The journal entry for one bank row. The bank side is implied by the transaction.
+
+    Withdrawal: Dr `account` (amount - tax - fee), Dr 부가세대급금 tax, Dr 지급수수료 fee / Cr bank.
+    Deposit:    Dr bank / Cr `account` (amount - tax), Cr 부가세예수금 (revenue) or 부가세대급금 tax.
+    `account` equal to the bank's own account with `transfer_to` set is a transfer between company accounts.
+    """
+
+    tx_id: str
+    account: str = ""
+    tax: int = 0
+    fee: int = 0
+    memo: str = ""
+    vendor_code: str = ""
+    vendor: str = ""
+    card: str = ""
+    transfer_to: str = ""  # deposit row in another company account
+    skip: bool = False  # not a booking (e.g. a row the bank reversed the same day)
+    autofilled: dict[str, str] = Field(default_factory=dict)
+    ai: AiSuggestion | None = None
+    confirmed: bool = False
+    confirmed_at: str | None = None
+
+
+class EntryReview(BaseModel):
+    account: str | None = None
+    tax: int | None = Field(default=None, ge=0)
+    fee: int | None = Field(default=None, ge=0)
+    memo: str | None = None
+    vendor_code: str | None = None
+    vendor: str | None = None
+    card: str | None = None
+    transfer_to: str | None = None
+    skip: bool | None = None
+
+
 class LedgerLine(BaseModel):
-    receipt_id: str
+    receipt_id: str  # source id: a receipt (R-001), a bank row (T-...), or "closing"
     voucher: str
     date: str
     memo: str
@@ -195,6 +342,8 @@ class ReceiptView(ReceiptRecord):
     notices: list[str] = Field(default_factory=list)
     balanced: bool
     duplicate_of: str = ""
+    year_review_required: bool = False
+    vendor_review_required: bool = False
 
 
 class PaymentCandidate(BaseModel):
@@ -223,3 +372,19 @@ class BulkUpdate(BaseModel):
 
 class BulkIds(BaseModel):
     ids: list[str] = Field(default_factory=list)
+
+
+class EntryView(BankEntry):
+    """A bank row, its entry, and the cross-check against receipts."""
+
+    transaction: BankTransaction
+    lines: list[LedgerLine]
+    missing: list[str]
+    balanced: bool
+    covered_by: str = ""  # receipt id, or the withdrawal of a company-account transfer, that books this row
+    checks: list[str] = Field(default_factory=list)  # receipt ↔ bank cross-check findings
+    requires_person: bool = False  # a transfer with no receipt: never posted automatically
+
+
+Workspace.model_rebuild()
+VatReturn.model_rebuild()

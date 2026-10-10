@@ -7,6 +7,7 @@ from datetime import date
 
 from app.models import BankTransaction, PaymentCandidate, ReceiptRecord, Workspace
 from app.services.ledger import normalize_name
+from app.services import invoice_review
 
 MAX_DAYS_BEFORE = 3  # card authorisations can post before the slip date
 MAX_DAYS_AFTER = 45  # transfers for invoices are often paid weeks later
@@ -16,6 +17,10 @@ def _names(r: ReceiptRecord, workspace: Workspace) -> set[str]:
     names = {r.merchant}
     names.update(v.name for v in workspace.vendors if v.code and v.code == r.vendor_code)
     names.update(v.alias for v in workspace.vendors if v.code and v.code == r.vendor_code)
+    for v in workspace.vendors:
+        if v.code and v.code == r.vendor_code:
+            names.update(v.aliases)
+            names.update(v.payment_aliases)
     return {n for n in map(normalize_name, names) if len(n) >= 2}
 
 
@@ -37,11 +42,16 @@ def candidates(
         if tx.withdrawal != r.total or r.total <= 0:
             continue
         days = (date.fromisoformat(tx.posted_at[:10]) - receipt_day).days
-        if not -MAX_DAYS_BEFORE <= days <= MAX_DAYS_AFTER:
+        is_invoice = invoice_review.invoice(r)
+        if is_invoice and not tx.posted_at.startswith(workspace.year + "-"):
+            continue
+        if not is_invoice and not -MAX_DAYS_BEFORE <= days <= MAX_DAYS_AFTER:
             continue
         score = 0.5
         reasons = ["금액 일치"]
-        if days == 0:
+        if is_invoice:
+            reasons.append("같은 회계연도 출금")
+        elif days == 0:
             score += 0.3
             reasons.append("같은 날 출금")
         else:
@@ -51,6 +61,9 @@ def candidates(
         if any(n in description or description in n for n in names if description):
             score += 0.2
             reasons.append("거래처명 일치")
+        if invoice_review.representative_matches(r, tx.description):
+            score += 0.2
+            reasons.append(f"공급자 대표자명 일치 · {r.extraction.representative}")
         if tx.id in linked:
             score -= 0.4
             reasons.append(f"이미 {linked[tx.id]}에 연결됨")

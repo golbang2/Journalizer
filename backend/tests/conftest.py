@@ -21,3 +21,8 @@ if sys.platform == "win32":
                 time.sleep(0.05)
 
     socket.socketpair = _retrying_socketpair
+
+# Tests never call the Claude API; the AI judge is exercised with a stub where needed.
+import os
+
+os.environ["AI_JUDGE"] = "off"

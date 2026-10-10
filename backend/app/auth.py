@@ -18,7 +18,7 @@ import httpx
 from fastapi import Cookie, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
-from sqlalchemy import delete, func, insert, select, update
+from sqlalchemy import delete, func, insert, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
@@ -110,11 +110,6 @@ def get_store(user: User = Depends(current_user), engine: Engine = Depends(get_d
 
 # --- Accounts ---------------------------------------------------------------
 
-def user_count(engine: Engine) -> int:
-    with engine.connect() as c:
-        return c.execute(select(func.count()).select_from(db.users)).scalar_one()
-
-
 def create_user(engine: Engine, email: str, name: str, password: str | None = None, google_sub: str | None = None) -> User:
     try:
         with engine.begin() as c:
@@ -205,20 +200,22 @@ def google_profile(code: str) -> dict:
 
 
 def google_user(engine: Engine, profile: dict) -> User:
-    """Sign in by Google id; link to an existing email account only when Google verified the email."""
+    """Sign in by Google subject. An email match never authorizes account linking."""
+    subject = profile.get("sub")
+    if not isinstance(subject, str) or not subject.strip() or profile.get("email_verified") is not True:
+        raise HTTPException(status_code=403, detail="구글 계정의 이메일이 확인되지 않았습니다.")
     with engine.connect() as c:
-        row = c.execute(select(db.users).where(db.users.c.google_sub == profile["sub"])).first()
+        row = c.execute(select(db.users).where(db.users.c.google_sub == subject)).first()
     if row:
         return _user(row)
-    email = (profile.get("email") or "").lower()
-    if not email or not profile.get("email_verified"):
+    email = profile.get("email")
+    if not isinstance(email, str) or not email.strip():
         raise HTTPException(status_code=403, detail="구글 계정의 이메일이 확인되지 않았습니다.")
+    email = normalize_email(email)
     existing = find_user(engine, email)
     if existing:
-        with engine.begin() as c:
-            c.execute(update(db.users).where(db.users.c.id == existing.id).values(google_sub=profile["sub"]))
-        return _user(find_user(engine, email))
-    return create_user(engine, email, profile.get("name") or email.split("@")[0], google_sub=profile["sub"])
+        raise HTTPException(status_code=409, detail="이 이메일로 가입된 계정이 있어 구글 로그인을 연결할 수 없습니다. 기존 가입 방식으로 로그인하거나 관리자에게 문의하세요.")
+    return create_user(engine, email, profile.get("name") or email.split("@")[0], google_sub=subject)
 
 
 def check_state(request: Request, state: str | None) -> None:

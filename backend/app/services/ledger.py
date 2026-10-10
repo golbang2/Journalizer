@@ -5,10 +5,12 @@ an expense is posted on the posting date, paid either the same day (보통예금
 or later (외상매입금 then settled), optionally clearing an earlier payable.
 """
 import re
+from app.services import invoice_review, vat_checks
 
 from app.models import (
     Account,
     BankAccount,
+    Card,
     LedgerLine,
     LedgerRow,
     LedgerView,
@@ -20,6 +22,9 @@ from app.models import (
 CASH_ACCOUNT = "10300"
 VAT_ACCOUNT = "13500"
 PAYABLE_ACCOUNT = "25100"
+CARD_PAYABLE_ACCOUNT = "25300"
+VAT_PAYABLE_ACCOUNT = "25500"
+FEE_ACCOUNT = "83100"
 
 DEFAULT_ACCOUNTS = [
     ("10300", "보통예금", "debit", "asset"),
@@ -36,6 +41,23 @@ DEFAULT_ACCOUNTS = [
     ("85300", "외주개발비", "debit", "expense"),
 ]
 
+# Accounts that bank-only bookings and the year-end closing need besides the expense set above.
+STANDARD_ACCOUNTS = DEFAULT_ACCOUNTS + [
+    ("10800", "외상매출금", "debit", "asset"),
+    ("12000", "미수금", "debit", "asset"),
+    ("25500", "부가세예수금", "credit", "liability"),
+    ("26100", "미지급세금", "credit", "liability"),
+    ("33100", "자본금", "credit", "equity"),
+    ("37500", "이월이익잉여금", "credit", "equity"),
+    ("37600", "이월결손금", "debit", "equity"),
+    ("37700", "미처분이익잉여금", "credit", "equity"),
+    ("37800", "미처리결손금", "debit", "equity"),
+    ("40000", "손익", "credit", "other"),
+    ("41200", "매출", "credit", "revenue"),
+    ("90100", "이자수익", "credit", "revenue"),
+    ("93000", "잡이익", "credit", "revenue"),
+]
+
 # OCR category hints are only suggestions; the reviewer always picks the account.
 CATEGORY_ACCOUNTS = {
     "meals": ("81100", "식음료 영수증입니다. 직원 식대면 복리후생비, 거래처 접대면 접대비로 바꾸세요."),
@@ -48,9 +70,23 @@ CATEGORY_ACCOUNTS = {
 
 def default_workspace() -> Workspace:
     return Workspace(
-        accounts=[Account(code=c, name=n, normal=s, kind=k) for c, n, s, k in DEFAULT_ACCOUNTS],
+        accounts=[Account(code=c, name=n, normal=s, kind=k) for c, n, s, k in STANDARD_ACCOUNTS],
         banks=[BankAccount(code="99000", name="우리은행"), BankAccount(code="99001", name="광주은행")],
     )
+
+
+def missing_standard_accounts(workspace: Workspace) -> list[Account]:
+    have = {a.code for a in workspace.accounts}
+    return [Account(code=c, name=n, normal=s, kind=k) for c, n, s, k in STANDARD_ACCOUNTS if c not in have]
+
+
+def account_name(workspace: Workspace, code: str) -> str:
+    known = next((a.name for a in workspace.accounts if a.code == code), "")
+    return known or next((n for c, n, _, _ in STANDARD_ACCOUNTS if c == code), code)
+
+
+def card(workspace: Workspace, code: str) -> Card | None:
+    return next((c for c in workspace.cards if c.code == code), None) if code else None
 
 
 def _bank(workspace: Workspace, code: str) -> BankAccount | None:
@@ -61,19 +97,27 @@ def journal(r: ReceiptRecord, workspace: Workspace) -> list[LedgerLine]:
     lines: list[LedgerLine] = []
     bank = _bank(workspace, r.bank)
     cash_account = bank.account if bank else CASH_ACCOUNT
-    later = r.payment == "paid" and r.payment_date != r.posting_date
+    paid_card = card(workspace, r.card) if r.payment == "paid" else None
+    via_card = bool(paid_card and paid_card.payable)
+    later = r.payment == "paid" and (r.payment_date != r.posting_date or via_card)
+    payable = CARD_PAYABLE_ACCOUNT if via_card else PAYABLE_ACCOUNT
 
     def add(account: str, debit: int, credit: int, day: str = r.posting_date, payment: bool = False) -> None:
         if not (debit or credit):
             return
-        is_cash = account == cash_account
+        if account == cash_account:
+            vendor, code = (bank.name if bank else "출금 계좌 미선택"), r.bank
+        elif via_card and account == payable:
+            vendor, code = paid_card.name, paid_card.code
+        else:
+            vendor, code = r.merchant, r.vendor_code
         lines.append(LedgerLine(
             receipt_id=r.id,
             voucher=f"{r.id}-{'02' if payment else '01'}",
             date=day,
             memo=f"{r.merchant} 대금 지급" if payment else (r.purpose or "사용 목적 미입력"),
-            vendor=(bank.name if bank else "출금 계좌 미선택") if is_cash else r.merchant,
-            vendor_code=r.bank if is_cash else r.vendor_code,
+            vendor=vendor,
+            vendor_code=code,
             account=account,
             debit=debit,
             credit=credit,
@@ -84,9 +128,9 @@ def journal(r: ReceiptRecord, workspace: Workspace) -> list[LedgerLine]:
     add(r.account or "미선택", r.total - tax - offset, 0)
     add(VAT_ACCOUNT, tax, 0)
     add(PAYABLE_ACCOUNT, offset, 0)
-    add(cash_account if r.payment == "paid" and not later else PAYABLE_ACCOUNT, 0, r.total)
+    add(cash_account if r.payment == "paid" and not later else payable, 0, r.total)
     if later:
-        add(PAYABLE_ACCOUNT, r.total, 0, r.payment_date, True)
+        add(payable, r.total, 0, r.payment_date, True)
         add(cash_account, 0, r.total, r.payment_date, True)
     return lines
 
@@ -109,6 +153,10 @@ def missing(r: ReceiptRecord, workspace: Workspace) -> list[str]:
         items.append("회사 계정표에 있는 비용 계정")
     if not r.posting_date.startswith(year + "-"):
         items.append("회계연도에 맞는 전기일")
+    if invoice_review.needs_year_review(r, workspace):
+        items.append(f"OCR 연도 확인 ({r.extraction.purchased_at.year}년 / 회계연도 {year}년)")
+    if invoice_review.needs_vendor_review(r, workspace):
+        items.append("거래처 연결 확인 (세금계산서 공급자·통장 표시명)")
     if r.vat == "pending":
         items.append("부가세 처리 판단")
     if r.vat == "deductible" and not 0 <= r.tax <= r.total:
@@ -137,6 +185,8 @@ def missing(r: ReceiptRecord, workspace: Workspace) -> list[str]:
 def notices(r: ReceiptRecord) -> list[str]:
     """Worth checking, but never blocks confirmation."""
     items = []
+    if vat_checks.needs_vat_check(r):
+        items.append("법인 가맹점 영수증인데 부가세 0원 · 다시 읽기 필요")
     if r.payment == "paid" and not (r.payment_transaction_id or r.payment_link.strip()):
         items.append("출금 거래 미연결 · 통장 출금과 대조하지 않았습니다")
     return items
@@ -149,7 +199,9 @@ def view(r: ReceiptRecord, workspace: Workspace, duplicate_of: str = "") -> Rece
     gaps = missing(r, workspace)
     if duplicate_of:
         gaps.insert(0, f"중복 영수증 정리 ({duplicate_of}와 같은 영수증)")
-    return ReceiptView(**r.model_dump(), lines=lines, missing=gaps, notices=notices(r), balanced=debit == credit, duplicate_of=duplicate_of)
+    return ReceiptView(**r.model_dump(), lines=lines, missing=gaps, notices=notices(r), balanced=debit == credit, duplicate_of=duplicate_of,
+                       year_review_required=invoice_review.needs_year_review(r, workspace),
+                       vendor_review_required=invoice_review.needs_vendor_review(r, workspace))
 
 
 def normalize_name(value: str) -> str:
@@ -180,9 +232,13 @@ def posted_lines(receipts: list[ReceiptRecord], workspace: Workspace) -> list[Le
 
 
 def ledger(account: Account, receipts: list[ReceiptRecord], workspace: Workspace) -> LedgerView:
+    return ledger_view(account, posted_lines(receipts, workspace))
+
+
+def ledger_view(account: Account, lines: list[LedgerLine]) -> LedgerView:
     balance = account.opening
     rows = []
-    for line in posted_lines(receipts, workspace):
+    for line in lines:
         if line.account != account.code:
             continue
         balance += line.debit - line.credit if account.normal == "debit" else line.credit - line.debit

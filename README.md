@@ -68,13 +68,26 @@ python -m pytest
   표는 서버 시작 시 자동으로 만들어진다. 영수증 원본 파일도 DB에 저장된다.
 - **로그인**: 이메일·비밀번호(scrypt 해시, 세션은 httpOnly 쿠키). `GOOGLE_CLIENT_ID`,
   `GOOGLE_CLIENT_SECRET`을 넣으면 구글 로그인 버튼이 나타난다. 자세한 값은 `backend/.env.example`.
+  이메일이 같은 비밀번호 계정과 구글 계정은 자동으로 연결하지 않는다. 충돌하면 구글 로그인은
+  거절되며 기존 가입 방식으로 로그인하거나 관리자에게 소유권 확인을 요청해야 한다.
+  이전 버전에서 자동 연결된 계정은 서버가 DB를 초기화할 때 기존 비밀번호와 모든 세션을
+  폐기하고 구글 로그인만 허용한다. 회사·영수증 자료는 보존된다. 이 보안 변경을 배포할 때는
+  기존 서버 프로세스를 모두 종료하고 새 버전으로 재시작해야 한다.
 - **프록시**: 브라우저는 프론트엔드(3000)의 `/api/*`만 호출하고, Next.js가 이를 백엔드로 넘긴다.
   백엔드 주소가 8000이 아니면 프론트엔드를 켤 때 `BACKEND_URL`을 지정한다.
 - **PostgreSQL로 테스트**: `TEST_DATABASE_URL`을 지정하면 백엔드 테스트가 그 DB에서 돈다.
   테스트마다 표를 지우고 새로 만들므로 **실데이터가 있는 DB는 절대 지정하지 않는다.**
   `TEST_DATABASE_URL=postgresql+psycopg://postgres@127.0.0.1:5432/journalizer_test python -m pytest`
-- **기존 데이터**: 회원 기능 이전의 `backend/data/journalizer.db`와 `uploads/`는 처음 가입한 회원에게
-  한 번만 옮겨진다. 옮긴 뒤 `journalizer.db.imported` 표시 파일이 생기며 원본 파일은 지우지 않는다.
+- **기존 데이터**: 회원가입·구글 로그인으로 이전 자료를 자동 이관하지 않는다. 관리자가 소유권을
+  확인한 기존 회원의 **ID와 이메일을 함께 지정**하여 빈 회사로만 이관한다. 가입 이메일은
+  소유권이 인증된 값이 아니므로 이메일 일치만으로 대상자를 판단하면 안 된다.
+  이관 전 DB를 백업하고 웹 서버를 중지한 뒤 `backend` 폴더에서 아래 명령을 실행한다.
+  `--data-dir`는 `journalizer.db`와 `uploads/`가 있는 폴더이고, 대상 DB는 `DATABASE_URL`
+  또는 기본 로컬 DB다. 이관 뒤 `journalizer.db.imported` 표시 파일이 생기며 원본은 보존된다.
+
+```powershell
+python -m app.services.legacy --owner-id 123 --expected-email owner@example.com --data-dir "F:\Journalizer\backend\data"
+```
 
 1. **회사 기준**: 회계연도, 계정(분류·기초잔액), 회사 은행 계좌, 거래처·별칭을 저장한다.
 2. **자료 연결**: 영수증(PDF·이미지)을 올리면 OCR로 초안을 만든다. OCR이 실패해도 원본은
@@ -145,6 +158,10 @@ python -m unittest discover -s tests -v
 ```
 
 ## 테스트 데이터 보관
+
+실제 거래자료와 영수증은 로컬 `test_data/`에만 보관하며 Git에 올리지 않는다.
+`output/`, `tmp/`, 로컬 환경설정과 DB도 업로드 대상에서 제외한다.
+개인 샘플이 없는 체크아웃에서는 해당 자료에 의존하는 테스트만 건너뛴다.
 
 `test_data`에는 영수증 하나당 PDF 한 파일(1페이지)만 보관한다.
 기존 은행별 폴더를 사용하며 합본 PDF, 빈 페이지, 중복 분할본·ZIP은 보관하지 않는다.

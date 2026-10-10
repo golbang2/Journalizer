@@ -70,3 +70,56 @@
 .googleButton{gap:10px!important;color:#3c4043!important}
 .account{display:flex;align-items:center;gap:9px;margin:auto 8px 0;padding:12px 9px;border-top:1px solid var(--line);color:#5f6c80}.account>div{flex:1;min-width:0}.account strong{display:block;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.account small{display:block;color:#9aa3b0;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.account+.sideBottom{margin-top:0}
 @media(max-width:850px){.account>div{display:none}.account{flex-direction:column;margin:auto 0 0;padding:10px 0}}
+/* 거래 분개: model recommendations are highlighted (masked) until a person confirms them. */
+.entryTable{font-size:11px}.entryTable td{vertical-align:top}.entryTable select{min-width:150px;padding:6px 8px!important;font-size:11px!important}.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.amountInput{width:84px!important;padding:6px 8px!important;font-size:11px!important;text-align:right}
+.rowToggle{display:flex;align-items:flex-start;gap:4px;background:none;border:0;padding:0;color:inherit;text-align:left;cursor:pointer}
+.aiMark{background:#fff1a6;padding:0 3px;border-radius:2px;color:#5c4a00}
+.aiCell{background:#fff8cc;box-shadow:inset 3px 0 0 #e9c63a}.aiCell select,.aiCell input{background:#fffbe3!important;border-color:#e9d27a!important}
+.aiLow{background:#ffe7c7;box-shadow:inset 3px 0 0 #e38a2f}.aiLow select,.aiLow input{background:#fff3e2!important;border-color:#e9b27a!important}
+.aiBadge{display:flex;width:max-content;align-items:center;gap:3px;margin-top:4px;font-size:9px!important;color:#7a6200;background:#fff1a6;border-radius:3px;padding:1px 5px}
+.aiReason{margin-top:10px!important;color:#6b5a12!important;background:#fffbe3;padding:8px 10px;border-left:2px solid #e9c63a}
+.checkOk,.checkWarn{display:block;font-size:10px!important;white-space:nowrap}.checkOk{color:#4f7d64}.checkWarn{color:#b5642f}
+.doneRow td{color:#5b6779}.detailRow td{background:#fafbfd}
+.entryDetail{display:grid;grid-template-columns:minmax(260px,1fr) minmax(320px,1.2fr);gap:24px;padding:10px 0}.entryDetail h3{margin-bottom:8px}
+.miniTable{width:100%;font-size:11px}.miniTable td{padding:4px 6px;border-bottom:1px solid #eef1f5}
+.app label:has(.aiTag) input,.app label:has(.aiTag) select{background:#fffbe3;border-color:#e9d27a}
+.aiTag{display:inline-flex;align-items:center;gap:3px;font-size:9px!important;color:#7a6200;background:#fff1a6;border-radius:3px;padding:1px 5px;font-weight:600}
+/* Onboarding: required company documents */
+.onboardCard{max-width:520px}.docList{display:flex;flex-direction:column;gap:10px}
+.docItem{display:grid;grid-template-columns:22px 1fr auto;align-items:center;gap:12px;border:1px solid #e2e6ec;border-radius:7px;padding:12px 14px}
+.docItem b{font-size:13px}.docDone{border-color:#cbe5d6;background:#f6fbf8}
+.required{font-size:9px;color:#b54747;background:#fbefef;border-radius:3px;padding:1px 4px;margin-left:4px;font-weight:600}
+.hiddenInput{position:absolute;width:1px;height:1px;opacity:0;overflow:hidden}
+.docItem label{position:relative;cursor:pointer;flex-direction:row!important}
+/* Home: AI connection and step overview */
+.brandButton,.companyButton{background:none;border:0;cursor:pointer;text-align:left;color:inherit;width:calc(100% - 10px)}.brandButton{width:auto;font:inherit;font-weight:800!important;font-size:19px!important}.companyButton:hover,.brandButton:hover{opacity:.8}.companyButton{width:calc(100% - 10px);font-size:inherit}
+.aiConnect h2{display:flex;align-items:center;gap:7px}
+.keyRow{display:flex;align-items:center;gap:12px;margin-bottom:14px;font-size:12px;color:#637085}.keyRow code{background:#f3f5f8;border-radius:4px;padding:4px 8px}
+.keyForm{display:flex;align-items:flex-end;gap:12px;max-width:640px}.keyForm label{flex:1}
+.homeSteps{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px}
+.homeStep{display:flex;flex-direction:column;align-items:flex-start;gap:5px;text-align:left;background:#fafbfc;border:1px solid var(--line);border-radius:7px;padding:15px;color:inherit;cursor:pointer}.homeStep:hover{border-color:#b9c6e8;background:#f5f8ff}
+.homeStep .stepNum{margin:0}.homeStep b{font-size:13px}.homeStep small{color:var(--muted)}.homeStep em{font-style:normal;font-size:11px;color:#345cd4}
+@media (max-width:640px){.keyForm{flex-direction:column;align-items:stretch}}
+.personConfirm{display:inline-flex;align-items:center;gap:4px;white-space:nowrap;background:#fff4e5;color:#9a4f12;border:1px solid #f0c48f;border-radius:4px;padding:4px 8px;font-size:10px!important;font-weight:700!important;cursor:pointer}.personConfirm:hover:enabled{background:#ffe8c8}
+.precedentBox{display:flex;flex-direction:column;gap:6px;font-size:11px;color:#637085}.precedentBox b{font-size:12px;color:#2d3a50}.precedentBox span{display:flex;gap:10px}.precedentBox label{position:relative;cursor:pointer;flex-direction:row!important}
+.dupBanner{display:flex;align-items:center;gap:14px;padding:14px 18px;margin-bottom:18px;background:#fff7ec;border:1px solid #f0d2a8;border-radius:8px;color:#7a4a12}
+.dupBanner>div{flex:1;display:flex;flex-direction:column;gap:4px;min-width:0}.dupBanner b{font-size:13px}.dupBanner span{font-size:11px;color:#8a6235}.dupBanner small{font-size:10px;color:#9b7c43;overflow-wrap:anywhere}
+@media (max-width:640px){.dupBanner{flex-direction:column;align-items:stretch}}
+/* 결산 보고서 */
+.statementTitle{font-size:12px!important;font-weight:700;color:#2d3a50!important;margin:16px 0 8px!important}
+.statementTable{max-width:640px;font-size:12px}.statementTable td:nth-child(2),.statementTable td:nth-child(3),.statementTable th:nth-child(2){text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.statementTotal td{font-weight:700;background:#f5f7fb}.statementSub td{font-weight:600;color:#4c586b}.statementAccount{padding-left:28px!important;color:#55627a}
+.manualSale{margin-top:12px;font-size:11px;color:#55627a}.manualSale summary{cursor:pointer;font-weight:600;color:var(--blue);margin-bottom:10px}
+.reconcile{padding:8px 0}.reconcile>p{margin-bottom:8px!important}
+/* The receipt queue keeps to the window height and scrolls its own list (desktop; phones scroll it sideways). */
+@media (min-width:851px){.queue{display:flex;flex-direction:column;max-height:calc(100vh - 36px)}.queueItems{flex:1;min-height:120px;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain}.queueTitle,.search,.queue>.tabs,.selectBar,.queueFoot{flex-shrink:0}}
+.receiptItem strong{overflow-wrap:anywhere;min-width:0}
+@media (min-width:851px){.queue>.tabs{flex-wrap:wrap;overflow:visible;column-gap:10px;row-gap:0}}
+@media(max-width:850px){.brandButton{font-size:0!important;width:auto;justify-content:center}}
+/* AI 연결: provider picker */
+.providerTabs{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:16px}
+.providerTab{display:flex;flex-direction:column;align-items:flex-start;gap:3px;text-align:left;background:#fafbfc;border:1px solid var(--line);border-radius:7px;padding:12px 14px;cursor:pointer;color:inherit}
+.providerTab small{color:var(--muted)}.providerTab:hover{border-color:#b9c6e8}
+.providerActive{border-color:var(--blue);background:#f2f6ff;box-shadow:inset 0 0 0 1px var(--blue)}
+.providerBody{display:flex;flex-direction:column;gap:12px}

@@ -19,7 +19,7 @@ export default function StatementSetup({ draft, onApply, notify }: Props) {
   const [files, setFiles] = useState<File[]>([]);
   const [proposal, setProposal] = useState<WorkspaceProposal | null>(null);
   const [loading, setLoading] = useState(false);
-  const [take, setTake] = useState({ company: true, year: true, openings: true, importRows: true });
+  const [take, setTake] = useState({ company: true, year: true, openings: true, importRows: true, cards: true, accounts: true });
   const [banks, setBanks] = useState<Set<number>>(new Set());
   const [vendors, setVendors] = useState<Record<string, { selected: boolean; account: string }>>({});
 
@@ -31,7 +31,7 @@ export default function StatementSetup({ draft, onApply, notify }: Props) {
       setProposal(p);
       setBanks(new Set(p.banks.map((_, i) => i)));
       setVendors(Object.fromEntries(p.vendors.map(v => [v.code, { selected: v.selected, account: v.account }])));
-      setTake({ company: !!p.company, year: true, openings: true, importRows: true });
+      setTake({ company: !!p.company, year: true, openings: true, importRows: true, cards: true, accounts: true });
     } catch (error) {
       notify((error as Error).message, "error");
     } finally {
@@ -41,7 +41,9 @@ export default function StatementSetup({ draft, onApply, notify }: Props) {
 
   const apply = () => {
     if (!proposal) return;
-    const next: Workspace = { ...draft, accounts: [...draft.accounts], banks: [...draft.banks], vendors: [...draft.vendors] };
+    const next: Workspace = { ...draft, accounts: [...draft.accounts], banks: [...draft.banks], vendors: [...draft.vendors], cards: [...draft.cards] };
+    if (take.accounts) next.accounts.push(...proposal.accounts.filter(a => !next.accounts.some(x => x.code === a.code)));
+    if (take.cards) for (const c of proposal.cards) if (!next.cards.some(x => x.code === c.code || x.number === c.number)) next.cards.push({ code: c.code, name: c.name, number: c.number, bank: c.bank, payable: c.payable });
     if (take.company && proposal.company) next.company = proposal.company;
     if (take.year) next.year = proposal.year;
     const chosen = proposal.banks.filter((_, i) => banks.has(i));
@@ -97,6 +99,13 @@ export default function StatementSetup({ draft, onApply, notify }: Props) {
       {Object.entries(proposal.openings).map(([code, amount]) => <label key={code} className={s.pick}><input type="checkbox" checked={take.openings} onChange={e => setTake(t => ({ ...t, openings: e.target.checked }))}/>
         <span><small>{code} {accountName(code)} 기초잔액</small><b>{money(amount)}원</b><em>계좌별 첫 거래 직전 잔액의 합</em></span></label>)}
     </div>
+
+    {(proposal.cards.length > 0 || proposal.accounts.length > 0) && <div className={s.proposalGrid}>
+      {proposal.cards.map(c => <label key={c.code + c.number} className={s.pick}><input type="checkbox" checked={take.cards} onChange={e => setTake(t => ({ ...t, cards: e.target.checked }))}/>
+        <span><small>카드 ({c.existing ? "등록됨" : "새 카드"})</small><b>{c.name} {c.number} · {c.code}</b><em>‘{c.number} 가맹점’ 거래 {c.rows}건 · 미지급금 경유</em></span></label>)}
+      {proposal.accounts.length > 0 && <label className={s.pick}><input type="checkbox" checked={take.accounts} onChange={e => setTake(t => ({ ...t, accounts: e.target.checked }))}/>
+        <span><small>통장 거래·결산에 필요한 계정</small><b>{proposal.accounts.length}개 추가</b><em>{proposal.accounts.map(a => a.name).join(", ")}</em></span></label>}
+    </div>}
 
     <h3 className={s.proposalTitle}>은행 계좌</h3>
     <div className={s.tableWrap}><table><thead><tr><th/><th>은행</th><th>계좌번호</th><th>상품</th><th>코드</th><th>기간</th><th>기초잔액</th></tr></thead><tbody>

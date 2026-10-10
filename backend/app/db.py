@@ -16,13 +16,16 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
+    Index,
     Integer,
     LargeBinary,
     MetaData,
     String,
     Table,
     create_engine,
+    delete,
     event,
+    update,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.engine import Engine
@@ -91,6 +94,55 @@ transactions = Table(
     Column("data", Json, nullable=False),
 )
 
+entries = Table(
+    "bank_entries", metadata,  # the journal entry for one bank row, keyed by the row's id
+    Column("company_id", Id, ForeignKey("companies.id", ondelete="CASCADE"), primary_key=True),
+    Column("tx_id", String(40), primary_key=True),
+    Column("data", Json, nullable=False),
+)
+
+documents = Table(
+    "company_documents", metadata,  # 등기부등본·주주명부·사업자등록증 uploaded at onboarding
+    Column("company_id", Id, ForeignKey("companies.id", ondelete="CASCADE"), primary_key=True),
+    Column("kind", String(30), primary_key=True),
+    Column("file_name", String(300), nullable=False),
+    Column("content_type", String(100), nullable=False),
+    Column("content", LargeBinary, nullable=False),
+    Column("uploaded_at", DateTime(timezone=True), nullable=False, default=utcnow),
+)
+
+secrets = Table(
+    "company_secrets", metadata,  # e.g. the company's Claude API key; never returned to the browser in full
+    Column("company_id", Id, ForeignKey("companies.id", ondelete="CASCADE"), primary_key=True),
+    Column("name", String(50), primary_key=True),
+    Column("value", String(500), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow),
+)
+
+sales_invoices = Table(
+    "sales_invoices", metadata,  # 매출 세금계산서
+    Column("company_id", Id, ForeignKey("companies.id", ondelete="CASCADE"), primary_key=True),
+    Column("id", String(20), primary_key=True),
+    Column("data", Json, nullable=False),
+)
+
+vat_returns = Table(
+    "vat_returns", metadata,  # 부가세 신고 정리
+    Column("company_id", Id, ForeignKey("companies.id", ondelete="CASCADE"), primary_key=True),
+    Column("id", String(20), primary_key=True),
+    Column("data", Json, nullable=False),
+)
+
+
+usage_events = Table(
+    "usage_events", metadata,  # one row per OCR/LLM call, for rate limits and daily caps
+    Column("id", Id, primary_key=True, autoincrement=True),
+    Column("company_id", Id, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False),
+    Column("kind", String(30), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, default=utcnow),
+    Index("ix_usage_company_time", "company_id", "created_at"),
+)
+
 
 def default_url() -> str:
     data_dir = Path(os.environ.get("JOURNALIZER_DATA_DIR", Path(__file__).resolve().parents[1] / "data"))
@@ -111,7 +163,23 @@ def make_engine(url: str | None = None) -> Engine:
             cursor.execute("PRAGMA journal_mode=WAL")
             cursor.close()
     metadata.create_all(engine)
+    retire_legacy_linked_credentials(engine)
     return engine
+
+
+def retire_legacy_linked_credentials(engine: Engine) -> None:
+    """Retire passwords/sessions created by the old unsafe Google auto-link flow.
+
+    These accounts keep their Google identity and business data. The update and
+    revocation commit together; once the password is gone, restarts are a no-op.
+    """
+    with engine.begin() as connection:
+        ids = list(connection.execute(
+            update(users).where(users.c.google_sub.is_not(None), users.c.password_hash.is_not(None))
+            .values(password_hash=None).returning(users.c.id)
+        ).scalars())
+        if ids:
+            connection.execute(delete(sessions).where(sessions.c.user_id.in_(ids)))
 
 
 _engine: Engine | None = None

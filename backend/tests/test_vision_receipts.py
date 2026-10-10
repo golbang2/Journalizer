@@ -214,59 +214,43 @@ class VisionCacheTests(unittest.TestCase):
         client.transport.close()
 
 
-class ApiIntegrationTests(unittest.TestCase):
+class ExtractToDraftTests(unittest.TestCase):
     def test_image_default_extracts_and_builds_draft_without_anthropic_key(self):
-        from fastapi.testclient import TestClient
-        from app.main import app
+        from app.services.journalizer import build_journal_entry
         for format, ext in [('JPEG','jpg'),('PNG','png'),('WEBP','webp')]:
-            with self.subTest(format=format), tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {'VISION_OCR_CACHE_DIR':folder}, clear=True), patch('app.services.vision_receipts._request_image_ocr', return_value=image_response()) as request, patch('app.services.receipts.extract_claude_receipt') as claude, TestClient(app) as client:
-                extracted = client.post('/receipts/extract', files={'file':(f'receipt.{ext}', image_bytes(format), f'image/{ext}')})
-                self.assertEqual(extracted.status_code, 200, extracted.text)
-                receipt = extracted.json()
-                self.assertEqual(receipt['extraction_provider'],'google_vision')
-                self.assertEqual(receipt['approval_number'],'12345678')
-                draft = client.post('/journal-entries/draft', json=receipt)
-                self.assertEqual(draft.status_code, 200)
-                self.assertEqual(draft.json()['lines'][-1]['amount'], '3800')
+            with self.subTest(format=format), tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {'VISION_OCR_CACHE_DIR':folder}, clear=True), patch('app.services.vision_receipts._request_image_ocr', return_value=image_response()) as request, patch('app.services.receipts.extract_claude_receipt') as claude:
+                receipt = extract_receipt(f'receipt.{ext}', image_bytes(format))
+                self.assertEqual(receipt.extraction_provider, 'google_vision')
+                self.assertEqual(receipt.approval_number, '12345678')
+                self.assertEqual(str(build_journal_entry(receipt).lines[-1].amount), '3800')
                 request.assert_called_once()
                 claude.assert_not_called()
 
     def test_extract_to_draft_preserves_won_warning_and_approval_number(self):
-        from fastapi.testclient import TestClient
-        from app.main import app
+        from app.services.journalizer import build_journal_entry
         data = response()
         words = data['responses'][0]['responses'][0]['fullTextAnnotation']['pages'][0]['blocks'][0]['paragraphs'][0]['words']
         words[:] = [w for w in words if ''.join(s['text'] for s in w['symbols']) != '111-22-33333']
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {'VISION_OCR_CACHE_DIR':folder, 'RECEIPT_PDF_ENGINE':'vision'}), patch('app.services.vision_receipts._request_ocr', return_value=data):
-            with TestClient(app) as client:
-                extracted = client.post('/receipts/extract', files={'file':('foreign.pdf', pdf(), 'application/pdf')})
-                self.assertEqual(extracted.status_code, 200)
-                receipt = extracted.json()
-                self.assertEqual(receipt['currency'], 'KRW')
-                self.assertEqual(receipt['approval_number'], '12345678')
-                self.assertTrue(any('원화 결제금액' in w for w in receipt['warnings']))
-                draft = client.post('/journal-entries/draft', json=receipt)
-                self.assertEqual(draft.status_code, 200)
-                self.assertEqual(draft.json()['receipt']['field_evidence'], receipt['field_evidence'])
-                self.assertEqual(draft.json()['warnings'], receipt['warnings'])
+            receipt = extract_receipt('foreign.pdf', pdf())
+        self.assertEqual(receipt.currency, 'KRW')
+        self.assertEqual(receipt.approval_number, '12345678')
+        self.assertTrue(any('원화 결제금액' in w for w in receipt.warnings))
+        draft = build_journal_entry(receipt)
+        self.assertEqual(draft.receipt.field_evidence, receipt.field_evidence)
+        self.assertEqual(draft.warnings, receipt.warnings)
 
-    def test_unsupported_receipt_returns_review_error(self):
+
+class PublicOcrRouteTests(unittest.TestCase):
+    def test_anonymous_callers_cannot_reach_ocr_or_drafts(self):
         from fastapi.testclient import TestClient
         from app.main import app
-        with patch.dict(os.environ, {'RECEIPT_PDF_ENGINE':'vision', 'RECEIPT_VISION_FALLBACK':'none'}), patch('app.services.vision_receipts.extract_vision_pdf', side_effect=ReceiptParseError('unknown layout')):
-            with TestClient(app) as client:
-                result = client.post('/receipts/extract', files={'file':('sample.pdf', b'pdf', 'application/pdf')})
-                self.assertEqual(result.status_code, 422)
-                self.assertIn('전표 확인', result.json()['detail'])
-
-    def test_vision_error_returns_gateway_error(self):
-        from fastapi.testclient import TestClient
-        from app.main import app
-        with patch.dict(os.environ, {'RECEIPT_PDF_ENGINE':'vision'}), patch('app.services.vision_receipts.extract_vision_pdf', side_effect=VisionResponseError('provider internals')):
-            with TestClient(app) as client:
-                result = client.post('/receipts/extract', files={'file':('sample.pdf', b'pdf', 'application/pdf')})
-                self.assertEqual(result.status_code, 502)
-                self.assertNotIn('provider internals', result.json()['detail'])
+        with patch('app.main.extract_receipt') as ocr, TestClient(app) as client:
+            extracted = client.post('/receipts/extract', files={'file':('sample.pdf', b'pdf', 'application/pdf')})
+            self.assertIn(extracted.status_code, (404, 405))
+            self.assertEqual(client.post('/receipts', files={'file':('sample.pdf', b'pdf', 'application/pdf')}).status_code, 401)
+            self.assertEqual(client.post('/journal-entries/draft', json={}).status_code, 401)
+            ocr.assert_not_called()
 
 
 if __name__ == '__main__':

@@ -2,12 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { ArrowRight, Plus, Save, Trash2 } from "lucide-react";
-import { api, type Account, type BankAccount, type Vendor, type Workspace } from "./api";
+import { api, type Account, type BankAccount, type Card, type Vendor, type Workspace } from "./api";
 import type { Notify } from "./Workbench";
 import StatementSetup, { type PendingImport } from "./StatementSetup";
+import MoneyInput from "./MoneyInput";
 import s from "./workbench.module.css";
 
-const kinds: [Account["kind"], string][] = [["expense", "비용"], ["asset", "자산"], ["liability", "부채"], ["other", "기타"]];
+const kinds: [Account["kind"], string][] = [["expense", "비용"], ["revenue", "수익"], ["asset", "자산"], ["liability", "부채"], ["equity", "자본"], ["other", "기타"]];
 const thisYear = new Date().getFullYear();
 const years = Array.from({ length: 8 }, (_, i) => String(thisYear - 5 + i));
 
@@ -21,9 +22,30 @@ export default function CompanyStep({ workspace, onSaved, onTransactionsChanged,
   const dirty = JSON.stringify(draft) !== JSON.stringify(workspace) || pending.length > 0;
 
   const set = (patch: Partial<Workspace>) => setDraft(d => ({ ...d, ...patch }));
-  const editRow = <K extends "accounts" | "vendors" | "banks">(key: K, index: number, patch: Partial<Workspace[K][number]>) =>
+  const editRow = <K extends "accounts" | "vendors" | "banks" | "cards">(key: K, index: number, patch: Partial<Workspace[K][number]>) =>
     setDraft(d => ({ ...d, [key]: (d[key] as Workspace[K][number][]).map((row, i) => i === index ? { ...row, ...patch } : row) }));
-  const removeRow = (key: "accounts" | "vendors" | "banks", index: number) => setDraft(d => ({ ...d, [key]: d[key].filter((_, i) => i !== index) }));
+  const removeRow = (key: "accounts" | "vendors" | "banks" | "cards", index: number) => setDraft(d => ({ ...d, [key]: d[key].filter((_, i) => i !== index) }));
+
+  const [busyLedger, setBusyLedger] = useState(false);
+  const learnLedger = async (file: File) => {
+    setBusyLedger(true);
+    try {
+      const result = await api.uploadPrecedents(file);
+      const ws = await api.workspace();
+      setDraft(d => ({ ...d, precedents: ws.precedents, precedent_source: ws.precedent_source }));
+      await onSaved({ ...workspace, precedents: ws.precedents, precedent_source: ws.precedent_source });
+      notify(`${result.source}에서 ${result.rows}건의 기장, ${result.count}종의 적요·거래처 습관을 학습했습니다.`);
+    } catch (error) {
+      notify((error as Error).message, "error");
+    } finally {
+      setBusyLedger(false);
+    }
+  };
+  const forgetLedger = async () => {
+    await api.deletePrecedents();
+    setDraft(d => ({ ...d, precedents: [], precedent_source: "" }));
+    await onSaved({ ...workspace, precedents: [], precedent_source: "" });
+  };
 
   const save = async () => {
     setSaving(true);
@@ -66,7 +88,7 @@ export default function CompanyStep({ workspace, onSaved, onTransactionsChanged,
           <td><input aria-label={`${a.code} 계정명`} value={a.name} onChange={e => editRow("accounts", i, { name: e.target.value })}/></td>
           <td><select aria-label={`${a.code} 분류`} value={a.kind} onChange={e => editRow("accounts", i, { kind: e.target.value as Account["kind"] })}>{kinds.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></td>
           <td><select aria-label={`${a.code} 잔액 기준`} value={a.normal} onChange={e => editRow("accounts", i, { normal: e.target.value as Account["normal"] })}><option value="debit">차변</option><option value="credit">대변</option></select></td>
-          <td><input aria-label={`${a.code} 기초잔액`} type="number" value={a.opening} onChange={e => editRow("accounts", i, { opening: Number(e.target.value) || 0 })}/></td>
+          <td><MoneyInput aria-label={`${a.code} 기초잔액`} allowNegative value={a.opening} onChange={v => editRow("accounts", i, { opening: v })}/></td>
           <td><button className={s.iconButton} aria-label={`${a.code} 계정 삭제`} onClick={() => removeRow("accounts", i)}><Trash2 size={14}/></button></td>
         </tr>)}
       </tbody></table></div></section>
@@ -81,6 +103,36 @@ export default function CompanyStep({ workspace, onSaved, onTransactionsChanged,
           <td><select aria-label={`${i + 1}번 계좌 연결 계정`} value={b.account} onChange={e => editRow("banks", i, { account: e.target.value })}>{draft.accounts.filter(a => a.kind === "asset").map(a => <option key={a.code} value={a.code}>{a.code} · {a.name}</option>)}</select></td>
           <td><button className={s.iconButton} aria-label={`${b.name} 계좌 삭제`} onClick={() => removeRow("banks", i)}><Trash2 size={14}/></button></td>
         </tr>)}
+      </tbody></table></div></section>
+
+    <section className={s.card}><div className={s.cardHeading}><div><h2>회계 처리 기준</h2><p>AI와 자동 처리가 따르는 회사 기준입니다.</p></div></div>
+      <div className={s.fields}>
+        <label>카드 영수증 부가세<select value={draft.card_vat} onChange={e => set({ card_vat: e.target.value as Workspace["card_vat"] })}>
+          <option value="deduct">공제 요건을 갖춘 카드 영수증은 부가세 분리 (부가세 신고와 맞춤 · 권장)</option>
+          <option value="expense">카드 영수증 부가세는 비용에 포함 (카드 매입세액을 신고하지 않는 회사)</option></select></label>
+        <div className={s.precedentBox}><small>이전 연도 계정별원장 (회사 분류 습관 학습)</small>
+          {draft.precedents.length ? <b>{draft.precedent_source} · 적요·거래처 {draft.precedents.length}종 학습</b> : <b>없음</b>}
+          <span>
+            <label className={s.linkButton}>{busyLedger ? "읽는 중…" : "계정별원장 엑셀 올리기"}<input className={s.hiddenInput} type="file" accept=".xls,.xlsx" disabled={busyLedger}
+              onChange={e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) learnLedger(f); }}/></label>
+            {draft.precedents.length > 0 && <button className={s.linkButton} onClick={forgetLedger}>지우기</button>}
+          </span></div>
+      </div>
+      <p className={s.helper}>이전 연도 원장을 올리면 같은 적요·거래처를 그 해에 어떤 계정으로 기장했는지 AI가 참고합니다. 같은 연도의 원장을 올리면 정답을 미리 보여 주는 셈이니 비교 평가용으로는 쓰지 마세요.</p>
+    </section>
+
+    <section className={s.card}><div className={s.cardHeading}><div><h2>회사 카드</h2><p>통장에 ‘2462 가맹점’처럼 카드번호 네 자리로 찍히는 거래를 카드 사용으로 봅니다. 체크카드는 바로 출금되므로 비용/보통예금으로 분개합니다. 신용카드처럼 나중에 결제되면 ‘미지급금 경유’를 켜세요.</p></div>
+      <button className={s.secondary} onClick={() => set({ cards: [...draft.cards, { code: "", name: "", number: "", bank: draft.banks[0]?.code ?? "", payable: false }] })}><Plus size={14}/> 카드 추가</button></div>
+      <div className={s.tableWrap}><table><thead><tr><th>거래처 코드</th><th>카드 이름</th><th>카드번호 끝 4자리</th><th>결제 계좌</th><th>미지급금 경유</th><th/></tr></thead><tbody>
+        {draft.cards.map((c: Card, i) => <tr key={i}>
+          <td><input aria-label={`${i + 1}번 카드 코드`} value={c.code} placeholder="예: 98001" onChange={e => editRow("cards", i, { code: e.target.value.trim() })}/></td>
+          <td><input aria-label={`${i + 1}번 카드 이름`} value={c.name} placeholder="예: 광주은행카드" onChange={e => editRow("cards", i, { name: e.target.value })}/></td>
+          <td><input aria-label={`${i + 1}번 카드번호`} value={c.number} maxLength={4} onChange={e => editRow("cards", i, { number: e.target.value.replace(/\D/g, "") })}/></td>
+          <td><select aria-label={`${i + 1}번 카드 결제 계좌`} value={c.bank} onChange={e => editRow("cards", i, { bank: e.target.value })}><option value="">모든 계좌</option>{draft.banks.map(b => <option key={b.code} value={b.code}>{b.name} ({b.code})</option>)}</select></td>
+          <td><input type="checkbox" aria-label={`${i + 1}번 카드 미지급금 경유`} checked={c.payable} onChange={e => editRow("cards", i, { payable: e.target.checked })}/></td>
+          <td><button className={s.iconButton} aria-label={`${c.name} 카드 삭제`} onClick={() => removeRow("cards", i)}><Trash2 size={14}/></button></td>
+        </tr>)}
+        {!draft.cards.length && <tr><td colSpan={6} className={s.empty}>등록된 카드가 없습니다. 거래내역으로 자동 채우기를 하면 카드번호를 찾아 제안합니다.</td></tr>}
       </tbody></table></div></section>
 
     <section className={s.card}><div className={s.cardHeading}><div><h2>거래처 기준 정보</h2><p>상호와 입출금 표시명(별칭)이 달라도 같은 거래처로 연결합니다. 기본 계정·적요는 영수증을 확정하면 자동으로 학습되고, 같은 거래처의 새 영수증에 미리 채워집니다.</p></div>

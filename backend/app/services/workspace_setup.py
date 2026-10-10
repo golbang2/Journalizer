@@ -8,7 +8,7 @@ import re
 from app.models import Workspace
 from app.services.autofill import AUTO_PREFIX, find_vendor
 from app.services.bank_statements import StatementInfo
-from app.services.ledger import CASH_ACCOUNT, normalize_name
+from app.services.ledger import CASH_ACCOUNT, missing_standard_accounts, normalize_name
 
 # Rows that are the bank's own activity, not a trading partner.
 NOT_A_VENDOR = re.compile(r"이자|수수료|카드결제|결제대금|예금신규|예금결산|OTP|인증서|반환|타행환|자동이체")
@@ -125,6 +125,8 @@ def propose(statements: list[tuple[str, StatementInfo]], workspace: Workspace) -
             "selected": outgoing and not memo and frequent, "note": note,
         })
 
+    cards = propose_cards(statements, banks, workspace)
+
     openings: dict[str, int] = defaultdict(int)
     for bank in banks:
         if bank["opening"] is not None:
@@ -136,4 +138,30 @@ def propose(statements: list[tuple[str, StatementInfo]], workspace: Workspace) -
         "banks": banks,
         "openings": dict(openings),
         "vendors": vendors,
+        "cards": cards,
+        "accounts": [a.model_dump() for a in missing_standard_accounts(workspace)],
     }
+
+
+CARD_PREFIX = re.compile(r"^(\d{4})\s+\S")
+MIN_CARD_ROWS = 3
+
+
+def propose_cards(statements, banks: list[dict], workspace: Workspace) -> list[dict]:
+    """Check-card purchases show as '2462 가맹점' rows; the four digits identify the card."""
+    used = {c.code for c in workspace.cards} | {b.code for b in workspace.banks}
+    cards = []
+    for (file_name, info), bank in zip(statements, banks):
+        counts = Counter(m.group(1) for t in info.transactions if (m := CARD_PREFIX.match(t.description.strip())))
+        for number, count in counts.most_common():
+            if count < MIN_CARD_ROWS:
+                continue
+            existing = next((c for c in workspace.cards if c.number == number), None)
+            if existing:
+                code = existing.code
+            else:
+                code = next(str(n) for n in range(98001, 98999) if str(n) not in used)
+                used.add(code)
+            cards.append({"code": code, "existing": bool(existing), "name": f"{bank['name']}카드", "number": number,
+                          "bank": bank["code"], "payable": False, "rows": count, "file_name": file_name})
+    return cards

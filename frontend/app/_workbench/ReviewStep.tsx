@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowRight, Check, CheckCircle2, Copy, ExternalLink, FileText, Layers, Link2, Loader2, RefreshCw, Search, Sparkles, Trash2, TriangleAlert, Upload, Unlink, Wand2, X } from "lucide-react";
-import { api, fileUrl, isDone, money, type BankTransaction, type PaymentCandidate, type Receipt, type Review, type Workspace } from "./api";
+import { api, autoMessage, fileUrl, isAi, isDone, money, type BankTransaction, type PaymentCandidate, type Receipt, type Review, type Workspace } from "./api";
 import type { Notify } from "./Workbench";
+import MoneyInput from "./MoneyInput";
 import s from "./workbench.module.css";
 
 type Props = {
@@ -25,6 +26,7 @@ export default function ReviewStep(props: Props) {
   const current = receipts.find(x => x.id === selected) ?? receipts.find(x => !isDone(x)) ?? receipts[0];
   const failed = receipts.filter(x => x.extraction_error && !x.confirmed);
   const duplicates = receipts.filter(x => x.duplicate_of && !x.confirmed);
+  const zeroVat = receipts.filter(x => x.notices.some(n => n.startsWith("법인 가맹점")));
 
   const run = async (label: string, task: () => Promise<void>) => {
     setBusy(label);
@@ -48,20 +50,30 @@ export default function ReviewStep(props: Props) {
     notify(`${failed.length}건 중 ${fixed}건을 추출했습니다.${fixed < failed.length ? " 나머지는 원본을 보고 직접 입력하세요." : ""}`);
   });
 
+  const judge = () => run("judge", async () => {
+    const result = await api.autoProcess();
+    props.onReceipts(await api.receipts());
+    notify(autoMessage(result), result.error && !result.judged && !result.auto?.receipts ? "error" : "success");
+  });
+
   const reapply = () => run("autofill", async () => {
     props.onReceipts(await api.autofill());
     await props.onWorkspaceChanged();
     notify("거래처 규칙·카드전표·은행 거래로 빈 항목을 다시 채웠습니다. 직접 입력한 값은 바꾸지 않았습니다.");
   });
 
-  const removeDuplicates = () => {
-    if (!window.confirm(`같은 영수증을 여러 번 올린 ${duplicates.length}건을 삭제할까요? 가장 먼저 올린 영수증은 남깁니다.`)) return;
-    run("dups", async () => {
-      const { deleted } = await api.deleteDuplicates();
-      props.onDeleted(deleted);
-      notify(`중복 영수증 ${deleted.length}건을 삭제했습니다.`);
-    });
-  };
+  const recheckVat = () => run("vat", async () => {
+    const result = await api.recheckVat();
+    props.onReceipts(await api.receipts());
+    notify(`${result.checked}건을 다시 읽어 ${result.fixed}건의 부가세를 찾았습니다.${result.checked > result.fixed ? " 나머지는 면세 품목이거나 영수증에 부가세가 없습니다." : ""}${result.error ? ` 일부 실패: ${result.error}` : ""}`);
+  });
+
+  // One click: every later copy goes, the first upload of each receipt stays. Confirmed receipts are never touched.
+  const removeDuplicates = () => run("dups", async () => {
+    const { deleted } = await api.deleteDuplicates();
+    props.onDeleted(deleted);
+    notify(`중복 영수증 ${deleted.length}건을 정리했습니다. 각 영수증은 처음 올린 것만 남겼습니다.`);
+  });
 
   if (!current) {
     return <section className={`${s.card} ${s.emptyState}`}><FileText size={28}/><h2>검토할 영수증이 없습니다</h2><p>자료 연결 단계에서 영수증 파일을 올리면 이곳에 나타납니다.</p><button className={s.primary} onClick={onUpload}><Upload size={16}/> 영수증 올리기</button></section>;
@@ -75,7 +87,22 @@ export default function ReviewStep(props: Props) {
   const toggle = (id: string) => setChecked(set => { const next = new Set(set); if (next.has(id)) next.delete(id); else next.add(id); return next; });
   const selectedReceipts = receipts.filter(x => checked.has(x.id) && !x.confirmed);
 
-  return <div className={s.reviewLayout}>
+  return <>
+    {zeroVat.length > 0 && <div className={s.dupBanner} role="status">
+      <TriangleAlert size={17}/>
+      <div><b>법인 가맹점인데 부가세가 0원으로 읽힌 영수증 {zeroVat.length}건</b>
+        <span>법인은 일반과세자라 보통 부가세가 찍힙니다. 자동 추출이 부가세를 놓쳤을 수 있어 Claude로 부가세만 다시 읽습니다. 직접 정한 부가세는 바꾸지 않습니다.</span>
+        <small>{zeroVat.map(x => `${x.id}(${x.merchant} ${money(x.total)}원)`).join(" · ")}</small></div>
+      <button className={s.primary} disabled={!!busy} onClick={recheckVat}>{busy === "vat" ? <Loader2 className={s.spin} size={14}/> : <RefreshCw size={14}/>} 부가세 다시 읽기</button>
+    </div>}
+    {duplicates.length > 0 && <div className={s.dupBanner} role="status">
+      <Copy size={17}/>
+      <div><b>같은 영수증이 {duplicates.length}건 더 올라와 있습니다</b>
+        <span>승인번호·금액·날짜가 같은 영수증입니다. 그대로 두면 비용이 두 번 잡힐 수 있어 장부에 넣지 않았습니다. 처음 올린 영수증만 남기고 나머지를 정리합니다.</span>
+        <small>{duplicates.map(x => `${x.id}(${x.merchant || x.file_name}) → ${x.duplicate_of}`).join(" · ")}</small></div>
+      <button className={s.primary} disabled={!!busy} onClick={removeDuplicates}>{busy === "dups" ? <Loader2 className={s.spin} size={14}/> : <Trash2 size={14}/>} 중복 {duplicates.length}건 정리</button>
+    </div>}
+    <div className={s.reviewLayout}>
     <section className={s.queue}>
       <div className={s.queueTitle}><h2>검토할 영수증</h2><span>{receipts.length}</span></div>
       <label className={s.search}><Search size={16}/><input aria-label="영수증 검색" placeholder="거래처·번호 검색" value={query} onChange={e => setQuery(e.target.value)}/></label>
@@ -97,6 +124,7 @@ export default function ReviewStep(props: Props) {
       <div className={s.queueFoot}>
         {duplicates.length > 0 && <button className={s.textButton} disabled={!!busy} onClick={removeDuplicates}>{busy === "dups" ? <Loader2 className={s.spin} size={13}/> : <Copy size={13}/>} 중복 영수증 {duplicates.length}건 삭제</button>}
         {failed.length > 0 && <button className={s.textButton} disabled={!!busy} onClick={retryAll}>{busy === "retry" ? <Loader2 className={s.spin} size={13}/> : <RefreshCw size={13}/>} 자동 추출 실패 {failed.length}건 다시 실행</button>}
+        <button className={s.textButton} disabled={!!busy} onClick={judge}>{busy === "judge" ? <Loader2 className={s.spin} size={13}/> : <Sparkles size={13}/>} AI로 전부 처리</button>
         <button className={s.textButton} disabled={!!busy} onClick={reapply}>{busy === "autofill" ? <Loader2 className={s.spin} size={13}/> : <Wand2 size={13}/>} 빈 항목 자동 입력 다시 적용</button>
         <button className={s.textButton} onClick={onUpload}><Upload size={13}/> 영수증 더 올리기</button>
       </div>
@@ -104,7 +132,8 @@ export default function ReviewStep(props: Props) {
     {selectedReceipts.length > 0
       ? <BulkPanel {...props} items={selectedReceipts} onDone={() => setChecked(new Set())}/>
       : <ReceiptEditor key={current.id} {...props} receipt={current} onSelectGroup={ids => setChecked(new Set(ids))}/>}
-  </div>;
+    </div>
+  </>;
 }
 
 function BulkPanel({ workspace, items, onReceipts, onWorkspaceChanged, notify, onDone }: Props & { items: Receipt[]; onDone: () => void }) {
@@ -224,6 +253,7 @@ function ReceiptEditor({ receipt, receipts, workspace, transactions, onReceipt, 
     chain.current = chain.current.then(async () => {
       try {
         onReceipt(await api.updateReceipt(receipt.id, changes));
+        if (changes.payment_transaction_id || changes.confirm_vendor) await onWorkspaceChanged();
       } catch (error) {
         notify((error as Error).message, "error");
       } finally {
@@ -231,7 +261,7 @@ function ReceiptEditor({ receipt, receipts, workspace, transactions, onReceipt, 
       }
     });
     return chain.current;
-  }, [receipt.id, onReceipt, notify]);
+  }, [receipt.id, onReceipt, notify, onWorkspaceChanged]);
 
   useEffect(() => () => { flush(); }, [flush]);
 
@@ -300,6 +330,7 @@ function ReceiptEditor({ receipt, receipts, workspace, transactions, onReceipt, 
   const deductibleTax = r.vat === "deductible" ? r.tax : 0;
   const ocrDiff = (field: "merchant" | "date" | "total") => {
     if (!ext) return null;
+    if (field === "date" && ext.purchased_at.slice(0, 4) === r.date.slice(0, 4)) return null;
     const original = field === "merchant" ? ext.merchant : field === "date" ? ext.purchased_at : Number(ext.total);
     return original !== r[field] ? <small className={s.ocrHint}>OCR: {typeof original === "number" ? money(original) : original}</small> : null;
   };
@@ -314,13 +345,25 @@ function ReceiptEditor({ receipt, receipts, workspace, transactions, onReceipt, 
         {r.extraction_error && <div className={s.warnBox}><TriangleAlert size={14}/><span>{r.extraction_error}</span>
           {!r.confirmed && <button className={s.secondary} disabled={extracting} onClick={reextract}>{extracting ? <Loader2 className={s.spin} size={13}/> : <RefreshCw size={13}/>} OCR 다시 실행</button>}</div>}
         <fieldset disabled={r.confirmed} className={s.formBody}>
+          {r.year_review_required && <div className={s.warnBox}><TriangleAlert size={14}/><div>
+            <b>OCR 연도 {ext?.purchased_at.slice(0, 4)}년이 회계연도 {workspace.year}년과 다릅니다.</b>
+            <p>원본의 연도를 확인해 주세요. 월·일은 입력된 값을 유지합니다.</p>
+            <button type="button" className={s.secondary} disabled={saving || !r.date} onClick={() => {
+              const day = workspace.year + r.date.slice(4);
+              update({ date: day, confirm_year: true,
+                ...(r.posting_date === r.date || !r.posting_date ? { posting_date: day } : {}),
+                ...(r.payment_date === r.date && !r.payment_transaction_id ? { payment_date: day } : {}),
+              }, true);
+            }}>{workspace.year}년으로 확인{r.date.slice(0, 4) !== workspace.year ? "하고 수정" : ""}</button>
+          </div></div>}
           <div className={s.receiptFacts}>
             <label><span className={s.labelRow}>거래처명 *<Auto r={r} f="merchant"/></span><input value={r.merchant} onChange={e => update({ merchant: e.target.value })}/>{ocrDiff("merchant")}</label>
             <label><span className={s.labelRow}>영수증 거래일 *<Auto r={r} f="date"/></span><input type="date" value={r.date} onChange={e => update({ date: e.target.value, ...(r.posting_date === r.date || !r.posting_date ? { posting_date: e.target.value } : {}) })}/>{ocrDiff("date")}</label>
-            <label><span className={s.labelRow}>결제 금액 (원) *<Auto r={r} f="total"/></span><input type="number" min="0" value={r.total} onChange={e => update({ total: Math.max(0, Number(e.target.value) || 0) })}/>{ocrDiff("total")}</label>
+            <label><span className={s.labelRow}>결제 금액 (원) *<Auto r={r} f="total"/></span><MoneyInput value={r.total} onChange={v => update({ total: v })}/>{ocrDiff("total")}</label>
           </div>
         </fieldset>
         {ext && <div className={s.extractMeta}><span>추출 부가세 <b>{money(r.original_tax)}원</b></span><span>결제수단 <b>{ext.payment_method}</b></span>{ext.approval_number && <span>승인번호 <b>{ext.approval_number}</b></span>}{ext.business_number && <span>사업자번호 <b>{ext.business_number}</b></span>}</div>}
+        {ext?.representative && <p className={s.helper}>공급자 대표자: {ext.representative}</p>}
         {!!ext?.warnings.length && <ul className={s.warnList}>{ext.warnings.map(w => <li key={w}>{w}</li>)}</ul>}
         <div className={s.sourceFile}><FileText size={15}/>{r.file_name}<button className={s.linkButton} onClick={() => setShowFile(v => !v)}>{showFile ? "원본 접기" : "원본 보기"}</button><a className={s.linkButton} href={fileUrl(r.id)} target="_blank" rel="noreferrer">새 창 <ExternalLink size={11}/></a></div>
         {showFile && <div className={s.filePreview}>{isPdf ? <iframe title={`${r.id} 원본`} src={fileUrl(r.id)}/> : (
@@ -334,6 +377,7 @@ function ReceiptEditor({ receipt, receipts, workspace, transactions, onReceipt, 
         <div className={s.headingActions}>{saving && <span className={s.savingTag}><Loader2 className={s.spin} size={12}/> 저장 중</span>}{r.confirmed && <button className={s.secondary} onClick={() => act(() => api.reopen(r.id), `${r.id}를 검토 상태로 되돌렸습니다. 원장에서 빠집니다.`)}>검토로 되돌리기</button>}</div></div>
         {r.duplicate_of && <div className={s.warnBox}><Copy size={14}/><span>{r.duplicate_of}와 같은 영수증(승인번호·금액·날짜 동일)입니다. 중복으로 비용이 두 번 잡히지 않도록 이 영수증은 삭제하세요.</span>{!r.confirmed && <button className={s.secondary} onClick={remove}>이 영수증 삭제</button>}</div>}
         {!r.confirmed && Object.keys(r.autofilled).length > 0 && <div className={s.autoSummary}><Sparkles size={14}/><div><b>{Object.keys(r.autofilled).length}개 항목을 자동으로 채웠습니다.</b> 내용이 맞는지 확인하세요. 직접 고치면 자동 표시가 사라집니다.
+          {r.ai && <p className={s.aiReason}>{r.ai.model} 추천 · 신뢰도 {Math.round(r.ai.confidence * 100)}% — {r.ai.reason}</p>}
           <ul>{Object.entries(r.autofilled).filter(([f]) => !["payment_date", "bank", "payment_transaction_id", "payment_link"].includes(f)).map(([f, why]) => <li key={f}><span>{FIELD_NAMES[f] ?? f}</span>{why}</li>)}</ul></div></div>}
         <fieldset disabled={r.confirmed} className={s.formBody}>
           <h3><span>01</span> 사용 목적과 귀속</h3><div className={s.fields}>
@@ -350,7 +394,7 @@ function ReceiptEditor({ receipt, receipts, workspace, transactions, onReceipt, 
           <div className={s.fields}>
             <label><span className={s.labelRow}>비용 계정 *<Auto r={r} f="account"/></span><select value={r.account} onChange={e => update({ account: e.target.value }, true)}><option value="">계정 선택</option>{expenses.map(a => <option key={a.code} value={a.code}>{a.code} · {a.name}</option>)}{r.account && !expenses.some(a => a.code === r.account) && <option value={r.account}>{r.account} · 계정표에 없음</option>}</select></label>
             <label><span className={s.labelRow}>부가세 처리 *<Auto r={r} f="vat"/></span><select value={r.vat} onChange={e => update({ vat: e.target.value as Review["vat"], ...(e.target.value === "deductible" && !r.tax ? { tax: r.original_tax } : {}) }, true)}><option value="pending">검토 필요</option><option value="deductible">부가세대급금으로 분리</option><option value="included">부가세를 비용에 포함</option></select></label>
-            {r.vat === "deductible" && <label><span className={s.labelRow}>확인한 공제 부가세 *<Auto r={r} f="tax"/></span><input type="number" min="0" max={r.total} value={r.tax} onChange={e => update({ tax: Number(e.target.value) || 0 })}/>{r.tax !== r.original_tax && <small className={s.ocrHint}>추출값 {money(r.original_tax)}원</small>}</label>}
+            {r.vat === "deductible" && <label><span className={s.labelRow}>확인한 공제 부가세 *<Auto r={r} f="tax"/></span><MoneyInput value={r.tax} onChange={v => update({ tax: v })}/>{r.tax !== r.original_tax && <small className={s.ocrHint}>추출값 {money(r.original_tax)}원</small>}</label>}
             <label className={s.wide}><span className={s.labelRow}>증빙·부가세 검토 근거 *<Auto r={r} f="evidence"/></span><input placeholder="예: 세금계산서 번호, 불공제 사유, 확인한 정산서" value={r.evidence} onChange={e => update({ evidence: e.target.value })}/></label>
           </div>
 
@@ -362,10 +406,15 @@ function ReceiptEditor({ receipt, receipts, workspace, transactions, onReceipt, 
               <label><span className={s.labelRow}>출금 거래 연결 <small className={s.optional}>선택 · 확정에는 필요 없음</small><Auto r={r} f="payment_link"/></span>{linkedTx ? <div className={s.linkedTx}><Link2 size={13}/><span>{r.payment_link}</span><button type="button" className={s.linkButton} onClick={() => update({ payment_link: "", payment_transaction_id: "" }, true)}><Unlink size={11}/> 해제</button></div>
                 : <input placeholder="거래 ID 또는 출금일·금액·수취인" value={r.payment_link} onChange={e => update({ payment_link: e.target.value })}/>}</label>
             </>}
-            <label><span className={s.labelRow}>기존 외상매입금 정산액<Auto r={r} f="payable_offset"/></span><input type="number" min="0" max={r.total} value={r.payable_offset} onChange={e => update({ payable_offset: Math.max(0, Number(e.target.value) || 0) })}/></label>
+            <label><span className={s.labelRow}>기존 외상매입금 정산액<Auto r={r} f="payable_offset"/></span><MoneyInput value={r.payable_offset} onChange={v => update({ payable_offset: v })}/></label>
             {r.payable_offset > 0 && <label><span className={s.labelRow}>기존 채무 전표 연결 *<Auto r={r} f="payable_link"/></span><input placeholder="기존 전표 번호 또는 원장 행" value={r.payable_link} onChange={e => update({ payable_link: e.target.value })}/></label>}
           </div>
-          {r.payment !== "unpaid" && !linkedTx && <Candidates candidates={candidates} hasTransactions={transactions.length > 0} onLink={tx => update({ payment_transaction_id: tx.id }, true)}/>}
+          {r.vendor_review_required && <div className={s.warnBox}><TriangleAlert size={14}/><div>
+            <b>세금계산서 공급자와 선택한 거래처가 같은지 확인해 주세요.</b>
+            <p>{ext?.merchant} · 대표자 {ext?.representative} · 사업자번호 {ext?.business_number}<br/>선택한 거래처: {workspace.vendors.find(v => v.code === r.vendor_code)?.name || "미선택"}</p>
+            <button type="button" className={s.secondary} disabled={saving || !r.vendor_code} onClick={() => update({ confirm_vendor: true }, true)}>같은 거래처로 확인</button>
+          </div></div>}
+          {r.payment !== "unpaid" && !linkedTx && <Candidates invoice={ext?.document_type === "tax_invoice"} candidates={candidates} hasTransactions={transactions.length > 0} onLink={tx => update({ payment_transaction_id: tx.id }, true)}/>}
           {r.payable_offset > 0 && <div className={s.inlineNote}>결제 총액 중 {money(r.payable_offset)}원은 기존 채무 정산으로 분리합니다. 신규 비용은 {money(r.total - r.payable_offset - deductibleTax)}원입니다.</div>}
           {r.payment === "paid" && r.payment_date !== r.posting_date && <div className={s.inlineNote}>전기일에는 비용과 외상매입금을, 지급일에는 외상매입금 정산과 은행 출금을 기록합니다.</div>}
           <p className={s.helper}>은행 지급·외상매입금 흐름을 다룹니다. 카드 결제, 선급금, 환불·취소는 별도 검토가 필요합니다.</p>
@@ -397,14 +446,14 @@ function ReceiptEditor({ receipt, receipts, workspace, transactions, onReceipt, 
   </>;
 }
 
-function Candidates({ candidates, hasTransactions, onLink }: { candidates: PaymentCandidate[] | null; hasTransactions: boolean; onLink: (tx: BankTransaction) => void }) {
+function Candidates({ candidates, hasTransactions, onLink, invoice }: { candidates: PaymentCandidate[] | null; hasTransactions: boolean; onLink: (tx: BankTransaction) => void; invoice: boolean }) {
   if (!hasTransactions) return <p className={s.helper}>은행 거래 내역을 가져오면 금액이 같은 출금 거래를 후보로 보여 줍니다.</p>;
   if (candidates === null) return <p className={s.helper}><Loader2 className={s.spin} size={12}/> 출금 거래 후보를 찾는 중</p>;
-  if (!candidates.length) return <p className={s.helper}>금액이 같은 출금 거래를 찾지 못했습니다 (영수증 3일 전 ~ 45일 후). 직접 입력하거나 미지급으로 처리하세요.</p>;
+  if (!candidates.length) return <p className={s.helper}>금액이 같은 출금 거래를 찾지 못했습니다 ({invoice ? "같은 회계연도" : "영수증 3일 전 ~ 45일 후"}). 직접 입력하거나 미지급으로 처리하세요.</p>;
   return <div className={s.candidates}><h4>출금 거래 후보</h4>{candidates.map(c => <div key={c.transaction.id} className={s.candidate}>
     <div><b>{c.transaction.posted_at.slice(0, 16).replace("T", " ")} · {c.transaction.bank_name}</b><span>{c.transaction.description}{c.transaction.kind ? ` · ${c.transaction.kind}` : ""}</span><small>{c.reasons.join(" · ")}</small></div>
     <strong>{money(c.transaction.withdrawal)}원</strong>
-    <button type="button" className={s.secondary} onClick={() => onLink(c.transaction)}>{c.linked_receipt_id ? "그래도 연결" : "연결"}</button>
+    <button type="button" className={s.secondary} disabled={invoice && !!c.linked_receipt_id} onClick={() => onLink(c.transaction)}>{invoice ? "거래처·출금 연결 확인" : c.linked_receipt_id ? "그래도 연결" : "연결"}</button>
   </div>)}</div>;
 }
 
@@ -416,6 +465,7 @@ const FIELD_NAMES: Record<string, string> = {
 // Maps a server "missing" label to the form field that fixes it.
 function gapField(gap: string): string | null {
   const rules: [RegExp, string][] = [
+    [/^OCR 연도/, "date"], [/^거래처 연결 확인/, "vendor_code"],
     [/^거래처명/, "merchant"], [/^결제 금액/, "total"], [/^사용 목적/, "purpose"], [/^거래처 코드/, "vendor_code"],
     [/비용 계정/, "account"], [/전기일/, "posting_date"], [/^부가세 처리/, "vat"], [/공제 부가세/, "tax"],
     [/^증빙/, "evidence"], [/^지급 상태/, "payment"], [/^지급일/, "payment_date"], [/^출금 계좌/, "bank"],
@@ -436,6 +486,8 @@ function Auto({ r, f }: { r: Receipt; f: string }) {
   const why = r.autofilled[f];
   const missing = !r.confirmed && r.missing.some(g => gapField(g) === f);
   return <span data-field={f} data-missing={missing || undefined} className={s.fieldMark}>
-    {why && !r.confirmed && <small className={s.autoTag} title={why}><Sparkles size={10}/> 자동</small>}
+    {why && !r.confirmed && (isAi(why)
+      ? <small className={s.aiTag} title={why}><Sparkles size={10}/> AI 추천</small>
+      : <small className={s.autoTag} title={why}><Sparkles size={10}/> 자동</small>)}
   </span>;
 }

@@ -155,6 +155,9 @@ def extract_vision_image(content: bytes):
 
 def _parse_annotation(annotation):
     compact = ''.join(annotation.get('text', '').split())
+    if '전자세금계산서' in compact and '작성일자' in compact:
+        from app.services.tax_invoice_parser import parse_tax_invoice
+        return parse_tax_invoice(annotation)
     if '우리카드' in compact and '매출전표' in compact:
         from app.services.woori_pdf_parser import parse_woori_pdf
         return parse_woori_pdf(annotation)[0]

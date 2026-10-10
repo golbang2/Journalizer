@@ -191,7 +191,7 @@ class ApiWorkflowTests(unittest.TestCase):
             linked = self.client.patch("/receipts/R-001", json={"payment_transaction_id": tx_id}).json()
             self.assertEqual((linked["payment"], linked["payment_date"], linked["bank"]), ("paid", "2023-11-19", "99000"))
         else:
-            self.client.patch("/receipts/R-001", json={"payment": "paid", "payment_date": "2023-11-19", "payment_link": "수동"})
+            self.client.patch("/receipts/R-001", json={"payment": "paid", "payment_date": "2023-11-19", "payment_link": "수동", "bank": "99000"})
 
         blocked = self.client.post("/receipts/R-001/confirm")
         self.assertEqual(blocked.status_code, 409)
@@ -206,10 +206,15 @@ class ApiWorkflowTests(unittest.TestCase):
         self.assertEqual([(row["date"], row["credit"]) for row in cash["rows"]], [("2023-11-19", 54140)])
         self.assertEqual(cash["closing"], -54140)
         csv_text = self.client.get("/ledger/83100/export.csv").content.decode("utf-8-sig")
-        self.assertIn("경영 자문 수수료", csv_text)
+        if WOORI.exists():
+            self.assertIn("기업김상철", csv_text)  # a linked receipt uses the bank transaction's description
+        else:
+            self.assertIn("경영 자문 수수료", csv_text)
         book = load_workbook(io.BytesIO(self.client.get("/exports/workbook.xlsx").content))
         self.assertIn("분개장", book.sheetnames)
-        self.assertEqual(book["분개장"].max_row, 2 + 5)
+        journal = [row for row in book["분개장"].iter_rows(min_row=3, values_only=True)]
+        self.assertEqual(len([r for r in journal if r[1] != "결산"]), 5)
+        self.assertIn(("40000", "비용에서 대체", 49218), [(r[2], r[4], r[7]) for r in journal if r[1] == "결산"])
 
         self.client.post("/receipts/R-001/reopen")
         self.assertEqual(self.client.get("/ledger/10300").json()["rows"], [])
@@ -284,6 +289,113 @@ class ApiWorkflowTests(unittest.TestCase):
         self.assertIn("해외", r["autofilled"]["vat"])
         edited = self.client.patch(f"/receipts/{r['id']}", json={"vat": "deductible", "tax": 0}).json()
         self.assertNotIn("vat", edited["autofilled"])
+
+    def test_existing_vendor_business_is_saved_on_upload_and_later_autofill(self):
+        ws = self.store.workspace()
+        ws.vendors.append(Vendor(code="A0002", name="특허법인아이엠", account="83100", auto=True))
+        self.store.save_workspace(ws)
+        r = self.upload(self.card_slip("75827171", 532000, "2023-11-09", merchant="특허법인아이엠",
+                                       business="409-85-32953", tax=48363))
+        self.assertEqual(r["vendor_code"], "A0002")
+        self.assertEqual(self.store.workspace().vendors[-1].business, "409-85-32953")
+        self.assertEqual(len(self.store.workspace().vendors), 2)
+
+        # An already-linked receipt must also repair a vendor created before this fix.
+        ws = self.store.workspace()
+        ws.vendors[-1].business = ""
+        self.store.save_workspace(ws)
+        result = self.client.post("/receipts/autofill", json={"ids": [r["id"]]})
+        self.assertEqual(result.status_code, 200, result.text)
+        self.assertEqual(self.store.workspace().vendors[-1].business, "409-85-32953")
+        # Existing user data must never be replaced by a subsequent extraction.
+        ws = self.store.workspace()
+        ws.vendors[-1].business = "123-45-67890"
+        self.store.save_workspace(ws)
+        self.client.post("/receipts/autofill", json={"ids": [r["id"]]})
+        self.assertEqual(self.store.workspace().vendors[-1].business, "123-45-67890")
+
+    def invoice(self, day="2028-11-15", total=54140, approval="20231115-10231121-58129813"):
+        return self.card_slip(approval, total, day, merchant="홍익경영파트너스", business="412-03-68733", tax=4922,
+                              method="청구").model_copy(update={"document_type": "tax_invoice", "representative": "김상철"})
+
+    def test_invoice_year_confirmation_and_first_link_then_reuse(self):
+        from app.main import _auto_process
+        ws = self.store.workspace()
+        ws.vendors = [Vendor(code="A0004", name="기업김상철", account="83100")]
+        self.store.save_workspace(ws)
+        self.store.add_transactions([BankTransaction(id="T-first", bank="99000", bank_name="우리은행",
+            posted_at="2023-11-19", description="기업김상철", withdrawal=54140)])
+        r = self.upload(self.invoice())
+        self.assertEqual(r["vendor_code"], "A0004")
+        self.assertEqual(r["payment_transaction_id"], "")
+        self.assertTrue(r["year_review_required"])
+        self.assertTrue(r["vendor_review_required"])
+        self.assertEqual(self.store.workspace().vendors[0].business, "")
+        candidates = self.client.get(f"/receipts/{r['id']}/payment-candidates").json()
+        self.assertEqual(len(candidates), 1)
+        self.assertIn("공급자 대표자명 일치 · 김상철", candidates[0]["reasons"])
+        _auto_process(self.store)
+        self.assertFalse(self.store.receipt(r["id"]).confirmed)
+        # General review, an AI result or editing the date alone cannot acknowledge the OCR year.
+        self.client.patch(f"/receipts/{r['id']}", json={"date": "2023-11-15", "posting_date": "2023-11-15", "checked": True})
+        self.assertTrue(self.client.get(f"/receipts/{r['id']}").json()["year_review_required"])
+        reviewed = self.client.patch(f"/receipts/{r['id']}", json={"confirm_year": True}).json()
+        self.assertFalse(reviewed["year_review_required"])
+        linked = self.client.patch(f"/receipts/{r['id']}", json={"payment_transaction_id": "T-first"})
+        self.assertEqual(linked.status_code, 200, linked.text)
+        self.assertFalse(linked.json()["vendor_review_required"])
+        v = self.store.workspace().vendors[0]
+        self.assertEqual((v.business, v.alias, v.payment_aliases), ("412-03-68733", "홍익경영파트너스", ["기업김상철"]))
+        # Subsequent invoices reuse the confirmed identity, irrespective of month/day distance.
+        self.store.add_transactions([BankTransaction(id="T-next", bank="99000", bank_name="우리은행",
+            posted_at="2023-12-19", description="기업김상철", withdrawal=60000)])
+        later = self.upload(self.invoice("2023-01-03", 60000, "20230103-10231121-58129813"))
+        self.assertEqual((later["vendor_code"], later["payment_transaction_id"]), ("A0004", "T-next"))
+        self.assertFalse(later["year_review_required"])
+        # Re-extraction requires a new year confirmation, even for the same original date.
+        with patch("app.main.extract_receipt", return_value=self.invoice()):
+            refreshed = self.client.post(f"/receipts/{r['id']}/extract").json()
+        self.assertTrue(refreshed["year_review_required"])
+
+    def test_invoice_duplicate_payment_candidates_are_never_auto_linked(self):
+        ws = self.store.workspace()
+        ws.vendors[0].business = "412-03-68733"
+        ws.vendors[0].payment_aliases = ["기업김상철"]
+        self.store.save_workspace(ws)
+        self.store.add_transactions([BankTransaction(id=f"T-{i}", bank="99000", bank_name="우리은행",
+            posted_at=f"2023-11-{19+i}", description="기업김상철", withdrawal=54140) for i in range(2)])
+        r = self.upload(self.invoice("2023-11-15"))
+        self.assertEqual(r["payment_transaction_id"], "")
+        self.assertEqual(len(self.client.get(f"/receipts/{r['id']}/payment-candidates").json()), 2)
+
+    def test_invoice_cannot_confirm_wrong_year_or_overwrite_vendor_number(self):
+        ws = self.store.workspace()
+        ws.vendors[0].business = "999-99-99999"
+        self.store.save_workspace(ws)
+        r = self.upload(self.invoice())
+        self.assertEqual(self.client.patch(f"/receipts/{r['id']}", json={"confirm_year": True}).status_code, 422)
+        self.assertEqual(self.client.patch(f"/receipts/{r['id']}", json={"confirm_vendor": True}).status_code, 422)
+        self.assertEqual(self.store.workspace().vendors[0].business, "999-99-99999")
+        self.assertEqual(self.client.post("/receipts/bulk-update", json={"ids": [r["id"]], "changes": {"confirm_year": True}}).status_code, 422)
+
+    def test_invoice_duplicate_survives_reviewed_year_and_month_day_changes(self):
+        first = self.upload(self.invoice())
+        self.client.patch(f"/receipts/{first['id']}", json={"date": "2023-02-03", "posting_date": "2023-02-03", "confirm_year": True})
+        duplicate = self.upload(self.invoice())
+        self.assertEqual(duplicate["duplicate_of"], first["id"])
+
+    def test_recovered_invoice_discards_failed_ocr_guesses_but_keeps_manual_input(self):
+        with patch("app.main.extract_receipt", side_effect=RuntimeError("bad layout")):
+            r = self.client.post("/receipts", files={"file": ("invoice.pdf", b"%PDF-1.7", "application/pdf")}).json()
+        stored = self.store.receipt(r["id"])
+        stored.vat, stored.account, stored.purpose = "included", "85300", "직접 입력한 자문료"
+        stored.autofilled = {"vat": "AI 추천 · 빈 자료", "account": "AI 추천 · 빈 자료"}
+        self.store.save_receipt(stored)
+        with patch("app.main.extract_receipt", return_value=self.invoice()):
+            recovered = self.client.post(f"/receipts/{r['id']}/extract").json()
+        self.assertEqual((recovered["vat"], recovered["tax"], recovered["purpose"]), ("deductible", 4922, "직접 입력한 자문료"))
+        self.assertEqual(recovered["account"], "")
+        self.assertTrue(recovered["year_review_required"])
 
     def test_duplicate_upload_is_flagged_and_removed(self):
         a = self.upload(self.card_slip("39199544", 56920, "2023-09-23"))

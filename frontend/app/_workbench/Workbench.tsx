@@ -1,21 +1,27 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Building2, ChevronRight, ClipboardCheck, FolderInput, Layers3, Loader2, LogOut, Settings2, UserRound } from "lucide-react";
+import { Building2, ChevronRight, ClipboardCheck, FolderInput, Landmark, Layers3, Loader2, LogOut, UserRound } from "lucide-react";
 import { api, ApiError, isDone, onUnauthorized, type BankTransaction, type Me, type Receipt, type Workspace } from "./api";
 import AuthScreen from "./AuthScreen";
 import CompanyStep from "./CompanyStep";
 import SourcesStep from "./SourcesStep";
 import ReviewStep from "./ReviewStep";
 import LedgerStep from "./LedgerStep";
+import EntriesStep from "./EntriesStep";
+import OnboardingScreen from "./OnboardingScreen";
+import HomeStep from "./HomeStep";
 import s from "./workbench.module.css";
 
 const steps = [
   { title: "회사 기준", sub: "계정 · 거래처 · 기초잔액", icon: Building2, lead: "회사의 계정과 거래처를 기준으로 분개와 원장을 맞춥니다." },
   { title: "자료 연결", sub: "영수증과 거래 내역 연결", icon: FolderInput, lead: "영수증을 올리면 자동으로 읽고, 은행 거래 내역으로 지급을 확인합니다." },
-  { title: "분개 검토", sub: "추가 정보 입력 · 확정", icon: ClipboardCheck, lead: "사용 목적, 부가세, 지급 정보를 확인하고 분개를 확정합니다." },
+  { title: "거래 분개", sub: "통장 거래 · AI 자동 처리", icon: Landmark, lead: "통장 거래마다 전표를 만들고, AI가 계정을 판단해 자동으로 장부에 반영합니다." },
+  { title: "영수증 검토", sub: "추가 정보 입력 · 확정", icon: ClipboardCheck, lead: "사용 목적, 부가세, 지급 정보를 확인하고 분개를 확정합니다." },
   { title: "계정별원장", sub: "확정 전표 모아보기", icon: Layers3, lead: "확정한 전표를 회사 계정별로 확인하고 내보냅니다." },
 ];
+
+const HOME = -1;
 
 export type Notify = (message: string, kind?: "success" | "error") => void;
 
@@ -50,11 +56,13 @@ export default function App() {
   }
   if (me === undefined) return <div className={s.boot}><Loader2 className={s.spin} size={22}/> 불러오는 중</div>;
   if (me === null) return <AuthScreen initialError={loginError} onSignedIn={signedIn => { setLoginError(""); setMe(signedIn); }}/>;
-  return <Workbench key={me.id} me={me} onLogout={async () => { await api.logout().catch(() => undefined); setMe(null); }}/>;
+  const logout = async () => { await api.logout().catch(() => undefined); setMe(null); };
+  if (!me.onboarded) return <OnboardingScreen onDone={() => setMe({ ...me, onboarded: true })} onLogout={logout}/>;
+  return <Workbench key={me.id} me={me} onLogout={logout}/>;
 }
 
 function Workbench({ me, onLogout }: { me: Me; onLogout: () => Promise<void> }) {
-  const [step, setStep] = useState(0);
+  const [step, setStep] = useState(HOME);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [transactions, setTransactions] = useState<BankTransaction[]>([]);
@@ -73,7 +81,6 @@ function Workbench({ me, onLogout }: { me: Me; onLogout: () => Promise<void> }) 
       setReceipts(list);
       setTransactions(txs);
       setLoadError("");
-      if (list.length) setStep(current => current === 0 ? 2 : current);
     } catch (error) {
       setLoadError((error as Error).message);
     }
@@ -114,27 +121,30 @@ function Workbench({ me, onLogout }: { me: Me; onLogout: () => Promise<void> }) 
 
   return <div className={s.app}>
     <aside className={s.sidebar}>
-      <div className={s.brand}><span className={s.logo}>J</span> Journalizer</div>
-      <div className={s.company}><Building2 size={18}/><div><strong>{workspace.company || "회사명 입력"}</strong><small>{workspace.year} 회계연도 · KRW</small></div></div>
+      <button className={`${s.brand} ${s.brandButton}`} onClick={() => go(HOME)} aria-label="메인 페이지로" title="메인 페이지"><span className={s.logo}>J</span> Journalizer</button>
+      <button className={`${s.company} ${s.companyButton}`} onClick={() => go(0)} title="회사 기준 · 회계연도 설정"><Building2 size={18}/><div><strong>{workspace.company || "회사명 입력"}</strong><small>{workspace.year} 회계연도 · KRW</small></div></button>
       <div className={s.navLabel}>원장 만들기</div>
       <nav>{steps.map((item, i) => <button key={item.title} onClick={() => go(i)} className={`${s.navItem} ${step === i ? s.active : ""}`} aria-current={step === i ? "step" : undefined}><item.icon size={19}/><span><strong>{item.title}</strong><small>{item.sub}</small></span><span className={s.stepNum}>0{i + 1}</span></button>)}</nav>
-      <div className={s.sideNote}><Settings2 size={18}/><strong>영수증에서 원장까지</strong><p>자동 추출은 초안일 뿐입니다.<br/>확정한 전표만 원장에 반영됩니다.</p></div>
       <div className={s.account}><UserRound size={16}/><div><strong title={me.email}>{me.name || me.email}</strong><small>{me.email}</small></div>
         <button className={s.iconButton} aria-label="로그아웃" title="로그아웃" onClick={onLogout}><LogOut size={15}/></button></div>
       <div className={s.sideBottom}>JOURNALIZER v0.3</div>
     </aside>
     <main className={s.main}>
-      <header className={s.topbar}><span>워크스페이스 <ChevronRight size={14}/> 원장 만들기 <ChevronRight size={14}/><b>{steps[step].title}</b></span><span className={s.sample}>영수증 {receipts.length} · 거래 {transactions.length}</span></header>
+      <header className={s.topbar}><span>워크스페이스 <ChevronRight size={14}/> 원장 만들기 <ChevronRight size={14}/><b>{step === HOME ? "홈" : steps[step].title}</b></span><span className={s.sample}>영수증 {receipts.length} · 거래 {transactions.length}</span></header>
       <div className={s.content}>
-        <div className={s.intro}><div><div className={s.eyebrow}>STEP 0{step + 1} / 04</div><h1>{step === 2 ? "영수증에 회계 정보를 더하세요" : steps[step].title}</h1><p>{steps[step].lead}</p></div><div className={s.counter}><strong>{confirmed}<span> / {receipts.length}</span></strong><small>검토 확정</small></div></div>
+        <div className={s.intro}>{step === HOME
+          ? <div><div className={s.eyebrow}>HOME</div><h1>{workspace.company || "회사"} 장부</h1><p>AI 연결을 확인하고, 원장 만들기 단계를 순서대로 진행하세요.</p></div>
+          : <div><div className={s.eyebrow}>STEP 0{step + 1} / 0{steps.length}</div><h1>{step === 3 ? "영수증에 회계 정보를 더하세요" : steps[step].title}</h1><p>{steps[step].lead}</p></div>}<div className={s.counter}><strong>{confirmed}<span> / {receipts.length}</span></strong><small>영수증 확정</small></div></div>
         {yearMismatch && <div className={s.yearBanner}><span>영수증 대부분이 <b>{yearMismatch}년</b>인데 회계연도가 {workspace.year}년으로 되어 있어 모든 영수증에 ‘회계연도에 맞는 전기일’이 누락으로 표시됩니다.</span><button className={s.primary} onClick={switchYear}>회계연도를 {yearMismatch}년으로 변경</button></div>}
         {notice && <div role={notice.kind === "error" ? "alert" : "status"} className={notice.kind === "error" ? s.error : s.success}>{notice.message}<button aria-label="알림 닫기" onClick={() => setNotice(null)}>×</button></div>}
 
+        {step === HOME && <HomeStep workspace={workspace} steps={steps} receipts={receipts.length} confirmed={confirmed} transactions={transactions.length} notify={notify} onOpen={go} onProcessed={async () => { await refreshReceipts(); }}/>}
         {step === 0 && <CompanyStep workspace={workspace} onSaved={async ws => { setWorkspace(ws); await refreshReceipts(); }} onTransactionsChanged={async () => { await refreshTransactions(); await refreshReceipts(); }} notify={notify} onNext={() => go(1)}/>}
         {step === 1 && <SourcesStep workspace={workspace} transactions={transactions} onReceipt={upsertReceipt} onTransactionsChanged={async () => { await refreshTransactions(); await refreshReceipts(); }} notify={notify} onNext={() => go(2)}/>}
-        {step === 2 && <ReviewStep workspace={workspace} receipts={receipts} transactions={transactions} selected={selected} onSelect={id => { setSelected(id); setNotice(null); }} onReceipt={upsertReceipt} onReceipts={setReceipts} onWorkspaceChanged={async () => setWorkspace(await api.workspace())} onDeleted={ids => setReceipts(list => list.filter(x => !ids.includes(x.id)))} notify={notify} onUpload={() => go(1)} onLedger={code => { setLedgerAccount(code); go(3); }}/>}
-        {step === 3 && <LedgerStep workspace={workspace} confirmed={confirmed} account={ledgerAccount || workspace.accounts.find(a => a.kind === "expense")?.code || workspace.accounts[0]?.code || ""} onAccount={setLedgerAccount} notify={notify} onSources={() => go(1)}/>}
-        <footer className={s.footer}><span>JOURNALIZER · RECEIPTS TO LEDGER</span><span>원본 → 추가 정보 → 검토 → 원장</span></footer>
+        {step === 2 && <EntriesStep workspace={workspace} notify={notify} onReceipts={() => { refreshReceipts(); go(3); }} onLedger={() => go(4)}/>}
+        {step === 3 && <ReviewStep workspace={workspace} receipts={receipts} transactions={transactions} selected={selected} onSelect={id => { setSelected(id); setNotice(null); }} onReceipt={upsertReceipt} onReceipts={setReceipts} onWorkspaceChanged={async () => setWorkspace(await api.workspace())} onDeleted={ids => setReceipts(list => list.filter(x => !ids.includes(x.id)))} notify={notify} onUpload={() => go(1)} onLedger={code => { setLedgerAccount(code); go(4); }}/>}
+        {step === 4 && <LedgerStep workspace={workspace} confirmed={confirmed} account={ledgerAccount || workspace.accounts.find(a => a.kind === "expense")?.code || workspace.accounts[0]?.code || ""} onAccount={setLedgerAccount} notify={notify} onSources={() => go(1)}/>}
+        <footer className={s.footer}><span>JOURNALIZER · RECEIPTS TO LEDGER</span><span>통장·영수증 → AI 판단 → 자동 반영 → 원장</span></footer>
       </div>
     </main>
   </div>;
