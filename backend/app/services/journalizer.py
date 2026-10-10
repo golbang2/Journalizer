@@ -48,7 +48,7 @@ def build_journal_entry(receipt: ReceiptExtraction) -> JournalEntryDraft:
 
     debit_total = sum(line.amount for line in lines if line.side == "debit")
     credit_total = sum(line.amount for line in lines if line.side == "credit")
-    warnings = []
+    warnings = list(receipt.warnings)
     if debit_total != credit_total:
         warnings.append("Debit and credit totals do not match.")
     if receipt.confidence < 0.75:

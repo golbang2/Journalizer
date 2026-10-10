@@ -1,6 +1,7 @@
 import base64
 import json
 import re
+import os
 from datetime import date
 from decimal import Decimal
 
@@ -77,11 +78,11 @@ def _strip_markdown(text: str) -> str:
     return match.group(1) if match else text
 
 
-def extract_receipt(filename: str, content: bytes) -> ReceiptExtraction:
+def extract_claude_receipt(filename: str, content: bytes, model: str | None = None) -> ReceiptExtraction:
     client = anthropic.Anthropic()
 
     response = client.messages.create(
-        model="claude-opus-4-7",
+        model=model or os.environ.get("CLAUDE_RECEIPT_MODEL", "claude-opus-4-7"),
         max_tokens=2048,
         system=_SYSTEM,
         messages=[
@@ -110,7 +111,7 @@ def extract_receipt(filename: str, content: bytes) -> ReceiptExtraction:
     return ReceiptExtraction(
         merchant=data["merchant"],
         purchased_at=date.fromisoformat(data["purchased_at"]),
-        currency=data.get("currency", "KRW"),
+        currency=data.get("currency") or "KRW",
         subtotal=Decimal(str(data["subtotal"])),
         tax=Decimal(str(data.get("tax", 0))),
         total=Decimal(str(data["total"])),
@@ -118,4 +119,33 @@ def extract_receipt(filename: str, content: bytes) -> ReceiptExtraction:
         category_hint=data.get("category_hint", "other"),
         confidence=float(data.get("confidence", 0.8)),
         line_items=line_items,
+        extraction_provider="claude",
     )
+
+
+def extract_receipt(filename: str, content: bytes) -> ReceiptExtraction:
+    is_pdf = filename.lower().endswith(".pdf")
+    engine = os.environ.get("RECEIPT_OCR_ENGINE", "vision").lower()
+    # Retain the explicitly configured PDF override for existing installations.
+    if is_pdf:
+        engine = os.environ.get("RECEIPT_PDF_ENGINE", engine).lower()
+    if engine not in ("vision", "claude"):
+        from app.services.bank_pdf_parser import ReceiptParseError
+        raise ReceiptParseError("RECEIPT_OCR_ENGINE / RECEIPT_PDF_ENGINE must be vision or claude.")
+    if engine == "vision":
+        from app.services.bank_pdf_parser import ReceiptInputError, ReceiptParseError
+        from app.services.vision_receipts import extract_vision_pdf, extract_vision_image
+        try:
+            return extract_vision_pdf(content) if is_pdf else extract_vision_image(content)
+        except ReceiptInputError:
+            raise
+        except ReceiptParseError as exc:
+            fallback = os.environ.get("RECEIPT_VISION_FALLBACK", "none").lower()
+            if fallback == "none":
+                raise
+            if fallback != "claude":
+                raise ReceiptParseError("RECEIPT_VISION_FALLBACK must be none or claude.") from exc
+            receipt = extract_claude_receipt(filename, content, model=os.environ.get("CLAUDE_RECEIPT_MODEL", "claude-haiku-5-5"))
+            receipt.warnings.append(f"Google Vision 규칙으로 확인하지 못해 Claude로 처리했습니다. 원본을 확인해 주세요. ({exc})")
+            return receipt
+    return extract_claude_receipt(filename, content)
