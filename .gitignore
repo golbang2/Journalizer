@@ -11,3 +11,16 @@ __pycache__/
 
 .env
 .env.local
+.env.*
+!.env.example
+!.env.*.example
+backend/.cache/
+
+backend/data/
+.next-*/
+.pytest_cache/
+*.tsbuildinfo
+.claude/
+/test_data/
+/output/
+/tmp/
