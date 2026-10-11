@@ -10,8 +10,8 @@ from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 
 from app.main import app
-from app.models import BankTransaction, ReceiptExtraction, ReceiptRecord, Vendor
-from app.services import ledger, matching
+from app.models import BankTransaction, Precedent, ReceiptExtraction, ReceiptRecord, Vendor
+from app.services import autofill, ledger, matching
 from app.services.bank_statements import StatementParseError, parse_statement
 from app.auth import create_user, get_store
 from db_helpers import fresh_engine
@@ -95,6 +95,30 @@ class JournalTests(unittest.TestCase):
         new = receipt(id="R-002", vendor_code="S001", extraction=extraction)
         self.assertEqual(ledger.suggest_account(new, [past])[0], "81300")
         self.assertEqual(ledger.suggest_account(new, [])[0], "81100")
+
+
+class GuessTests(unittest.TestCase):
+    def test_account_and_purpose_are_guessed_and_yield_to_vendor_defaults(self):
+        ws = workspace()
+        ws.precedents = [Precedent(text="정담식당", account="81300", count=4)]
+        r = receipt(merchant="카카오T 택시")
+        autofill.autofill(r, ws, [r], [], link=False)
+        self.assertEqual((r.account, r.purpose), ("81200", "카카오T 택시 여비교통비"))
+        self.assertTrue(autofill.guessed(r, "account") and autofill.guessed(r, "purpose"))
+
+        known = receipt(id="R-002", merchant="정담 식당")
+        autofill.autofill(known, ws, [known], [], link=False)
+        self.assertEqual(known.account, "81300")  # last year's ledger beats keywords
+
+        vendor = next(v for v in ws.vendors if v.code == r.vendor_code)
+        vendor.account, vendor.purpose = "81100", "야근 교통비"
+        self.assertTrue(autofill.vendor_defaults(r, vendor))
+        self.assertEqual((r.account, r.purpose), ("81100", "야근 교통비"))
+
+    def test_typed_values_are_never_guessed_over(self):
+        r = receipt(merchant="다이소", account="81100", purpose="간식")
+        autofill.autofill(r, workspace(), [r], [], link=False)
+        self.assertEqual((r.account, r.purpose), ("81100", "간식"))
 
 
 @unittest.skipUnless(WOORI.exists() and KWANGJU.exists(), "bank statement samples are not available")
@@ -262,7 +286,9 @@ class ApiWorkflowTests(unittest.TestCase):
         self.assertEqual(first["vendor_code"], "A0001")
         self.assertEqual((first["vat"], first["payment"], first["payment_transaction_id"]), ("included", "paid", "T-99000-a"))
         self.assertIn("85290016", first["evidence"])
-        self.assertEqual(set(first["missing"]), {"사용 목적", "비용 계정", "원본·거래 내역 확인"})
+        self.assertEqual(set(first["missing"]), {"원본·거래 내역 확인"})
+        self.assertEqual((first["account"], first["purpose"]), ("85300", "주식회사 크몽 외주개발비"))
+        self.assertTrue(first["autofilled"]["account"].startswith("추정"))
         vendor = self.client.get("/workspace").json()["vendors"][-1]
         self.assertEqual((vendor["name"], vendor["auto"]), ("주식회사 크몽", True))
 
@@ -274,7 +300,7 @@ class ApiWorkflowTests(unittest.TestCase):
         self.client.patch(f"/receipts/{first['id']}", json={"purpose": "외주 개발 용역", "account": "85300", "checked": True})
         self.assertEqual(self.client.post(f"/receipts/{first['id']}/confirm").status_code, 200)
         taught = self.client.get(f"/receipts/{second['id']}").json()
-        self.assertEqual((taught["purpose"], taught["account"]), ("외주 개발 용역", "85300"))
+        self.assertEqual((taught["purpose"], taught["account"]), ("외주 개발 용역", "85300"))  # learned defaults replace guesses
         self.assertIn("account", taught["autofilled"])
 
         result = self.client.post("/receipts/bulk-confirm", json={"ids": [second["id"], credit["id"]]}).json()
@@ -394,7 +420,8 @@ class ApiWorkflowTests(unittest.TestCase):
         with patch("app.main.extract_receipt", return_value=self.invoice()):
             recovered = self.client.post(f"/receipts/{r['id']}/extract").json()
         self.assertEqual((recovered["vat"], recovered["tax"], recovered["purpose"]), ("deductible", 4922, "직접 입력한 자문료"))
-        self.assertEqual(recovered["account"], "")
+        self.assertNotEqual(recovered["account"], "85300")  # the model's guess on the empty file is gone
+        self.assertTrue(recovered["autofilled"]["account"].startswith("추정"))
         self.assertTrue(recovered["year_review_required"])
 
     def test_duplicate_upload_is_flagged_and_removed(self):

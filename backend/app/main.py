@@ -369,15 +369,6 @@ def get_receipt(receipt_id: str, store: Store = Depends(get_store)) -> ReceiptVi
     return _view(store, _get_receipt(store, receipt_id))
 
 
-def _vendor_defaults(r: ReceiptRecord, vendor: Vendor) -> bool:
-    changed = False
-    if vendor.account and not r.account:
-        r.account, r.autofilled["account"], changed = vendor.account, f"{vendor.name}의 기본 계정", True
-    if vendor.purpose and not r.purpose.strip():
-        r.purpose, r.autofilled["purpose"], changed = vendor.purpose, f"{vendor.name}의 기본 적요", True
-    return changed
-
-
 def _apply_review(receipt: ReceiptRecord, changes: dict, store: Store) -> ReceiptRecord:
     confirm_year = changes.pop("confirm_year", False)
     confirm_vendor = changes.pop("confirm_vendor", False)
@@ -428,7 +419,7 @@ def _apply_review(receipt: ReceiptRecord, changes: dict, store: Store) -> Receip
     if "vendor_code" in changes:
         vendor = next((v for v in store.workspace().vendors if v.code == updated.vendor_code), None)
         if vendor:
-            _vendor_defaults(updated, vendor)
+            autofill.vendor_defaults(updated, vendor)
     return updated
 
 
@@ -531,7 +522,7 @@ def _confirm(store: Store, receipt: ReceiptRecord) -> list[str]:
         store.save_workspace(workspace)
         vendor = next(v for v in workspace.vendors if v.code == receipt.vendor_code)
         for other in store.receipts():
-            if not other.confirmed and other.vendor_code == vendor.code and _vendor_defaults(other, vendor):
+            if not other.confirmed and other.vendor_code == vendor.code and autofill.vendor_defaults(other, vendor):
                 store.save_receipt(other)
     return []
 
@@ -941,6 +932,9 @@ def _auto_process(store: Store) -> dict:
                 continue
         if _unsure(r.autofilled, r.ai):
             receipts_left[r.id] = "AI 확신 낮음 · 확인 필요"
+            continue
+        if autofill.guessed(r, "account"):
+            receipts_left[r.id] = "비용 계정 추정 · 확인 필요"
             continue
         _auto_fill_receipt(r, transactions)
         store.save_receipt(r)
