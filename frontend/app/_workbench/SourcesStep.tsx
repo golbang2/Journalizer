@@ -5,12 +5,13 @@ import { ArrowRight, CheckCircle2, FileText, Landmark, Loader2, Trash2, Triangle
 import { api, ApiError, money, type BankTransaction, type Receipt, type SalesInvoice, type Workspace } from "./api";
 import type { Notify } from "./Workbench";
 import MoneyInput from "./MoneyInput";
+import HometaxPanel from "./HometaxPanel";
 import s from "./workbench.module.css";
 
 type Progress = { name: string; state: "working" | "done" | "warn" | "failed"; detail: string };
 type Props = {
   workspace: Workspace; transactions: BankTransaction[]; onReceipt: (r: Receipt) => void;
-  onTransactionsChanged: () => Promise<void>; notify: Notify; onNext: () => void;
+  onTransactionsChanged: () => Promise<void>; notify: Notify; onNext: () => void; onReview: (id: string) => void;
 };
 
 const later = [
@@ -18,7 +19,7 @@ const later = [
   ["기초잔액·기존 채무", "전기말 잔액과 미결제 전표"],
 ];
 
-export default function SourcesStep({ workspace, transactions, onReceipt, onTransactionsChanged, notify, onNext }: Props) {
+export default function SourcesStep({ workspace, transactions, onReceipt, onTransactionsChanged, notify, onNext, onReview }: Props) {
   const [receiptProgress, setReceiptProgress] = useState<Progress[]>([]);
   const [statementProgress, setStatementProgress] = useState<Progress[]>([]);
   const [bank, setBank] = useState("");
@@ -82,6 +83,7 @@ export default function SourcesStep({ workspace, transactions, onReceipt, onTran
   };
 
   return <>
+    <HometaxPanel year={workspace.year} notify={notify} onReview={onReview}/>
     <div className={s.sourceGrid}>
       <section className={s.card}>
         <div className={s.sourceIcon}><FileText size={22}/></div><h2>영수증</h2><p>PDF·이미지 · 한 파일에 영수증 하나. 올리면 바로 자동 추출합니다.</p>

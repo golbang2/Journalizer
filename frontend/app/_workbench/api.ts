@@ -79,6 +79,20 @@ export type AiProvider = { id: string; label: string; console: string; key_hint:
 export type AiStatus = { provider: string; model: string; label: string; configured: boolean; source: AiSource; masked: string; providers: AiProvider[]; models: string[] };
 export type CompanyDocument = { kind: string; label: string; file_name: string; uploaded_at: string };
 
+export type HometaxKind = "card" | "invoice";
+export type HometaxCandidate = { id: string; merchant: string; date: string; total: number; evidence_tax: number; book_tax: number; vat: string; confirmed: boolean; same_kind: boolean };
+export type HometaxRow = {
+  id: string; kind: HometaxKind; date: string; business_number: string; merchant: string; approval_number: string;
+  supply: number; tax: number; total: number; service: number; deduction_text: string; status: string; adjustment: boolean;
+  receipt_id: string; manual: boolean; issues: string[]; candidates: HometaxCandidate[]; status_label: string;
+  sources: { import_id: string; file_name: string; sheet: string; row_number: number; tax: number; total: number; deduction_text: string }[];
+};
+export type HometaxReport = {
+  rows: HometaxRow[];
+  imports: { id: string; kind: HometaxKind; file_name: string; uploaded_at: string; rows: number; first: string; last: string }[];
+  unmatched_receipts: { id: string; merchant: string; date: string; total: number }[];
+};
+
 export class ApiError extends Error {
   /** Seconds the server asked us to wait (429 answers). */
   constructor(message: string, readonly status: number, readonly retryAfter = 0) { super(message); }
@@ -129,6 +143,10 @@ function upload(file: File, extra: Record<string, string> = {}): RequestInit {
 }
 
 export const api = {
+  importHometax: (file: File, kind: HometaxKind) => request<{ id: string; added: boolean; rows: number }>("/hometax/imports", upload(file, { kind })),
+  hometaxReport: (start: string, end: string) => request<HometaxReport>(`/hometax/reconcile?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`),
+  deleteHometax: (id: string) => request<void>(`/hometax/imports/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  linkHometax: (id: string, receiptId: string) => request<void>(`/hometax/rows/${encodeURIComponent(id)}/link`, json("PUT", { receipt_id: receiptId })),
   me: () => request<Me>("/auth/me"),
   authConfig: () => request<{ google: boolean }>("/auth/config"),
   signup: (email: string, password: string, name: string) => request<Me>("/auth/signup", json("POST", { email, password, name })),

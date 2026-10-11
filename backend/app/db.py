@@ -134,6 +134,22 @@ vat_returns = Table(
 )
 
 
+hometax_imports = Table(
+    "hometax_imports", metadata,
+    Column("company_id", Id, ForeignKey("companies.id", ondelete="CASCADE"), primary_key=True),
+    Column("id", String(64), primary_key=True),
+    Column("data", Json, nullable=False),
+    Column("content", LargeBinary, nullable=False),
+)
+
+hometax_links = Table(
+    "hometax_links", metadata,
+    Column("company_id", Id, ForeignKey("companies.id", ondelete="CASCADE"), primary_key=True),
+    Column("id", String(64), primary_key=True),
+    Column("receipt_id", String(20), nullable=False),
+)
+
+
 usage_events = Table(
     "usage_events", metadata,  # one row per OCR/LLM call, for rate limits and daily caps
     Column("id", Id, primary_key=True, autoincrement=True),

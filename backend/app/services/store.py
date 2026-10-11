@@ -5,7 +5,7 @@ from sqlalchemy import delete, func, insert, select, update
 from sqlalchemy.engine import Engine
 
 from app import db
-from app.models import BankEntry, BankTransaction, ReceiptRecord, SalesInvoice, VatReturn, Workspace
+from app.models import BankEntry, BankTransaction, HometaxImport, ReceiptRecord, SalesInvoice, VatReturn, Workspace
 from app.services.ledger import default_workspace, missing_standard_accounts
 
 
@@ -191,6 +191,52 @@ class Store:
             return c.execute(delete(db.vat_returns).where(t.company_id == self.company_id, t.id == item_id)).rowcount
 
     # Secrets -------------------------------------------------------------------
+    def hometax_imports(self) -> list[HometaxImport]:
+        t = db.hometax_imports.c
+        with self.engine.connect() as c:
+            values = c.execute(select(t.data).where(t.company_id == self.company_id).order_by(t.id)).scalars()
+            return [HometaxImport.model_validate(x) for x in values]
+
+    def add_hometax_import(self, item: HometaxImport, content: bytes) -> bool:
+        from sqlalchemy.exc import IntegrityError
+        try:
+            with self.engine.begin() as c:
+                c.execute(insert(db.hometax_imports).values(company_id=self.company_id, id=item.id,
+                          data=item.model_dump(mode="json"), content=content))
+            return True
+        except IntegrityError:
+            if any(x.id == item.id for x in self.hometax_imports()):
+                return False
+            raise
+
+    def hometax_file(self, item_id: str) -> StoredFile | None:
+        t = db.hometax_imports.c
+        with self.engine.connect() as c:
+            row = c.execute(select(t.data, t.content).where(t.company_id == self.company_id, t.id == item_id)).first()
+        return StoredFile(row.data["file_name"], "application/octet-stream", bytes(row.content)) if row else None
+
+    def delete_hometax_import(self, item_id: str) -> int:
+        t = db.hometax_imports.c
+        with self.engine.begin() as c:
+            removed = c.execute(delete(db.hometax_imports).where(t.company_id == self.company_id, t.id == item_id)).rowcount
+            remaining = c.execute(select(t.data).where(t.company_id == self.company_id)).scalars()
+            ids = {r["id"] for item in remaining for r in item["rows"]}
+            links = db.hometax_links.c
+            c.execute(delete(db.hometax_links).where(links.company_id == self.company_id, links.id.not_in(ids)))
+        return removed
+
+    def hometax_links(self) -> dict[str, str]:
+        t = db.hometax_links.c
+        with self.engine.connect() as c:
+            return dict(c.execute(select(t.id, t.receipt_id).where(t.company_id == self.company_id)).all())
+
+    def link_hometax(self, row_id: str, receipt_id: str) -> None:
+        t = db.hometax_links.c
+        with self.engine.begin() as c:
+            c.execute(delete(db.hometax_links).where(t.company_id == self.company_id, t.id == row_id))
+            if receipt_id:
+                c.execute(insert(db.hometax_links).values(company_id=self.company_id, id=row_id, receipt_id=receipt_id))
+
     def secret(self, name: str) -> str:
         k = db.secrets.c
         with self.engine.connect() as c:

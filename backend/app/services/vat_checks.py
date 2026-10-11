@@ -114,23 +114,5 @@ def reconcile(vr: VatReturn, receipts: list[ReceiptRecord]) -> dict:
 
 
 def fixes_from_schedule(vr: VatReturn, receipts: list[ReceiptRecord]) -> dict[str, int]:
-    """Receipt id -> VAT, where the filed schedule pins down a slip the OCR read as 0.
-
-    Only when it is unambiguous: one 0-VAT slip for that supplier gets the filed amount, or several
-    whose 1/11 estimates add up exactly to the filed amount.
-    """
-    result = reconcile(vr, receipts)
-    by_id = {r.id: r for r in receipts}
-    fixes: dict[str, int] = {}
-    for row in result["rows"]:
-        missing = row["difference"]
-        zero = [by_id[i] for i in row["zero_vat_receipts"]]
-        if missing <= 0 or not zero:
-            continue
-        if len(zero) == 1:
-            fixes[zero[0].id] = missing
-            continue
-        estimates = {r.id: estimate(r.total) for r in zero}
-        if sum(estimates.values()) == missing:
-            fixes.update(estimates)
-    return fixes
+    """A supplier total cannot establish an individual transaction's tax amount."""
+    return {}

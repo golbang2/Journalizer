@@ -176,6 +176,34 @@ class ScheduleRow(BaseModel):
     tax: int = 0
 
 
+class HometaxRow(BaseModel):
+    id: str
+    kind: Literal["card", "invoice"]
+    date: str
+    business_number: str
+    merchant: str
+    approval_number: str = ""
+    card_number: str = ""
+    supply: int
+    tax: int
+    total: int
+    service: int = 0
+    deduction: Literal["deductible", "nondeductible", "unknown"] = "unknown"
+    deduction_text: str = ""
+    status: str = ""
+    adjustment: bool = False
+    sheet: str
+    row_number: int
+
+
+class HometaxImport(BaseModel):
+    id: str
+    kind: Literal["card", "invoice"]
+    file_name: str
+    uploaded_at: str
+    rows: list[HometaxRow]
+
+
 class SalesInvoice(BaseModel):
     """매출 세금계산서: 외상매출금 / 매출 + 부가세예수금 on the issue date; the customer's deposit collects it."""
 

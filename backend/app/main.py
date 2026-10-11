@@ -55,6 +55,9 @@ RECEIPT_SUFFIXES = (".pdf", ".jpg", ".jpeg", ".png", ".gif", ".webp")
 
 app = FastAPI(title="Journalizer API", version="0.3.0")
 
+from app.hometax_routes import router as hometax_router
+app.include_router(hometax_router)
+
 app.add_middleware(RequestSizeLimit)
 app.add_middleware(  # outermost, so 413/429 answers still carry CORS headers
     CORSMiddleware,
@@ -1055,7 +1058,7 @@ def reconcile_vat_return(item_id: str, store: Store = Depends(get_store)) -> dic
 
 @app.post("/vat-returns/{item_id}/schedule")
 async def upload_vat_schedule(item_id: str, file: UploadFile = File(...), store: Store = Depends(get_store), meter: Meter = Depends(get_meter)) -> dict:
-    """Read the return's 부속서류 and reconcile it with the books; fix slips the OCR read as 0 where the schedule pins them down."""
+    """Read aggregate schedules for reconciliation only; never infer individual slip VAT."""
     item = _vat_return(store, item_id)
     filename = file.filename or "schedule.pdf"
     content = await read_upload(file)
@@ -1077,14 +1080,8 @@ async def upload_vat_schedule(item_id: str, file: UploadFile = File(...), store:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     item = item.model_copy(update={"schedule": [ScheduleRow.model_validate(r) for r in rows], "schedule_file": filename})
     store.save_vat_return(item)
-    workspace, receipts = store.workspace(), store.receipts()
-    fixes = vat_checks.fixes_from_schedule(item, receipts)
-    for r in receipts:
-        if r.id in fixes and vat_checks.set_vat(r, fixes[r.id], f"부가세 신고 부속서류 기준 · 부가세 {fixes[r.id]:,}원"):
-            autofill.apply_card_vat(r, workspace)
-            store.save_receipt(r)
     result = vat_checks.reconcile(item, store.receipts())
-    result["fixed"] = sorted(fixes)
+    result["fixed"] = []  # Aggregate differences are not evidence of an individual slip's VAT.
     return result
 
 

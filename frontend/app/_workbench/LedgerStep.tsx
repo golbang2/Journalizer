@@ -162,7 +162,7 @@ function VatReturns({ workspace, notify, onChanged }: { workspace: Workspace; no
       setRec(result);
       setOpen(id);
       onChanged();
-      notify(`부속서류 ${result.rows.length}개 거래처를 대조했습니다: 일치 ${result.matched}곳.${result.fixed?.length ? ` 자동 추출이 부가세를 0원으로 읽은 영수증 ${result.fixed.length}건을 신고서 금액으로 고쳤습니다.` : ""}`);
+      notify(`부속서류 ${result.rows.length}개 거래처를 대조했습니다: 일치 ${result.matched}곳. 차이가 있는 거래는 자료 연결의 홈택스 거래별 대조에서 확인하세요.`);
     } catch (error) {
       notify((error as Error).message, "error");
     } finally {

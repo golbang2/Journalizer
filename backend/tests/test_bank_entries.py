@@ -494,7 +494,7 @@ class VatCheckTests(unittest.TestCase):
         self.assertFalse(vat_checks.needs_vat_check(self.slip("R-004", "아이파크몰", 85500, 7772, "120-81-85957")))  # VAT shown
         self.assertEqual((vat_checks.estimate(85500), vat_checks.estimate(5900)), (7772, 536))
 
-    def test_schedule_reconciles_and_fixes_unambiguous_slips(self):
+    def test_schedule_reconciles_without_inventing_individual_slip_tax(self):
         from app.models import ScheduleRow, VatReturn
         from app.services import vat_checks
 
@@ -506,7 +506,8 @@ class VatCheckTests(unittest.TestCase):
         result = vat_checks.reconcile(vr, receipts)
         status = {r["business_number"]: r["status"] for r in result["rows"]}
         self.assertEqual(status, {"123-45-67890": "일치", "120-81-85957": "장부 누락", "201-81-21515": "장부 누락"})
-        self.assertEqual(vat_checks.fixes_from_schedule(vr, receipts), {"R-001": 536, "R-003": 7772})
+        self.assertEqual(vat_checks.fixes_from_schedule(vr, receipts), {})
+        self.assertEqual(receipts[0].extraction.tax, 0)
 
 
 class VatCheckApiTests(unittest.TestCase):
