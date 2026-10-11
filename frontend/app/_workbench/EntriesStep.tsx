@@ -133,7 +133,7 @@ export default function EntriesStep({ workspace, notify, onReceipts, onLedger }:
                     <option value="">계정 선택</option>{accounts.map(a => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}
                     {e.account && !accounts.some(a => a.code === e.account) && <option value={e.account}>{e.account} · 계정표에 없음</option>}</select>}
                 {isAi(e.autofilled.account) && <small className={s.aiBadge}><Sparkles size={9}/> AI {e.ai ? Math.round(e.ai.confidence * 100) : ""}%</small>}</td>
-              <td className={mask("tax")} title={e.autofilled.tax}>{!e.covered_by && !e.transfer_to && tx.withdrawal > 0
+              <td className={mask("tax")} title={e.autofilled.tax}>{!e.covered_by && !e.transfer_to
                 ? <MoneyInput aria-label={`${tx.description} 부가세`} className={s.amountInput} disabled={!editable} value={e.tax} commitOnBlur onChange={v => update(e, { tax: v })}/> : ""}</td>
               <td className={mask("vendor")} title={e.autofilled.vendor}>{e.covered_by ? "" : e.vendor}{e.vendor_code && <small className={s.tableSub}>{e.vendor_code}</small>}</td>
               <td>{e.checks.map(c => <small key={c} className={c.includes("차이") || c.includes("다름") ? s.checkWarn : s.checkOk}>{c}</small>)}
