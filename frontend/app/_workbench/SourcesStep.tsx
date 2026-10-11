@@ -83,7 +83,6 @@ export default function SourcesStep({ workspace, transactions, onReceipt, onTran
   };
 
   return <>
-    <HometaxPanel year={workspace.year} notify={notify} onReview={onReview}/>
     <div className={s.sourceGrid}>
       <section className={s.card}>
         <div className={s.sourceIcon}><FileText size={22}/></div><h2>영수증</h2><p>PDF·이미지 · 한 파일에 영수증 하나. 올리면 바로 자동 추출합니다.</p>
@@ -101,6 +100,7 @@ export default function SourcesStep({ workspace, transactions, onReceipt, onTran
         <div className={s.sourceIcon}><FileText size={22}/></div><h2>{title}</h2><p>{sub}</p><span className={s.soon}>준비 중</span>
       </section>)}
     </div>
+    <HometaxPanel year={workspace.year} notify={notify} onReview={onReview}/>
 
     <section className={s.card}><div className={s.cardHeading}><div><h2>가져온 은행 거래</h2><p>거래마다 전표를 만들고, 영수증과 금액·날짜·상호로 크로스체크합니다. 영수증이 연결된 출금은 영수증에서 한 번만 분개합니다.</p></div></div>
       {summary.length ? <div className={s.tableWrap}><table><thead><tr><th>계좌</th><th>기간</th><th>거래 수</th><th>출금 합계</th><th/></tr></thead><tbody>
