@@ -10,6 +10,19 @@ from app.models import BankTransaction, ReceiptRecord, Vendor, Workspace
 from app.services import ledger, matching, invoice_review
 
 AUTO_PREFIX = "A"
+GUESS = "추정"  # rule-of-thumb fills: a vendor default, company history or the model may replace them
+
+# Merchant / item words that say what kind of expense it is. Checked in order; first hit wins.
+ACCOUNT_KEYWORDS = [
+    ("81200", ("택시", "카카오T", "철도", "코레일", "KTX", "SRT", "고속버스", "버스", "항공", "AIR", "주유", "오일", "주차", "하이패스", "톨게이트", "호텔", "숙박", "모텔")),
+    ("81100", ("식당", "카페", "커피", "COFFEE", "스타벅스", "STARBUCKS", "이디야", "투썸", "베이커리", "제과", "김밥", "치킨", "피자", "국밥", "분식", "반찬", "도시락")),
+    ("85300", ("크몽", "KMONG", "외주", "용역", "개발")),
+    ("81900", ("임대료", "월세", "관리비", "공유오피스")),
+    ("81700", ("세무서", "구청", "시청", "과태료", "공과금", "인지세")),
+    ("83100", ("수수료", "구독", "SUBSCRIPTION", "AWS", "AMAZON WEB", "GOOGLE", "ADOBE", "MICROSOFT", "GITHUB", "OPENAI", "ANTHROPIC", "NOTION", "SLACK", "FIGMA", "APPLE.COM", "도메인", "호스팅")),
+    ("83000", ("다이소", "문구", "오피스", "OFFICE", "알파", "모닝글로리", "소모품", "사무용품", "ITCH", "STEAM", "UNITY", "에셋", "ASSET")),
+]
+DEFAULT_EXPENSE = "83000"  # 소모품비: the usual home of a small purchase nobody explained
 
 
 def _key(value: str) -> str:
@@ -56,6 +69,76 @@ def ensure_vendor(workspace: Workspace, merchant: str, business: str | None = No
 def _fill(r: ReceiptRecord, field: str, value, reason: str) -> None:
     setattr(r, field, value)
     r.autofilled[field] = reason
+
+
+def guessed(r: ReceiptRecord, field: str) -> bool:
+    return r.autofilled.get(field, "").startswith(GUESS)
+
+
+def _open(r: ReceiptRecord, field: str) -> bool:
+    """Empty, or only holding a rule-of-thumb guess that better knowledge may replace."""
+    value = getattr(r, field)
+    return not (value.strip() if isinstance(value, str) else value) or guessed(r, field)
+
+
+def vendor_defaults(r: ReceiptRecord, vendor: Vendor) -> bool:
+    """Apply the vendor's learned account and purpose over blanks and guesses. Returns True if changed."""
+    changed = False
+    if vendor.account and _open(r, "account") and (r.account, r.autofilled.get("account")) != (vendor.account, f"{vendor.name}의 기본 계정"):
+        _fill(r, "account", vendor.account, f"{vendor.name}의 기본 계정")
+        changed = True
+    if vendor.purpose and _open(r, "purpose") and (r.purpose, r.autofilled.get("purpose")) != (vendor.purpose, f"{vendor.name}의 기본 적요"):
+        _fill(r, "purpose", vendor.purpose, f"{vendor.name}의 기본 적요")
+        changed = True
+    return changed
+
+
+def _texts(r: ReceiptRecord) -> list[str]:
+    ext = r.extraction
+    if not ext:
+        return [r.merchant]
+    return [r.merchant, ext.merchant, *(item.description for item in ext.line_items)]
+
+
+def _expense_codes(workspace: Workspace) -> set[str]:
+    return {a.code for a in workspace.accounts if a.kind == "expense"}
+
+
+def guess_account(r: ReceiptRecord, workspace: Workspace) -> tuple[str, str]:
+    """Earlier-year ledger habits, then expense words in the merchant or items, then 소모품비."""
+    usable = _expense_codes(workspace)
+    names = {a.code: a.name for a in workspace.accounts}
+    key = _key(r.merchant)
+    if len(key) >= 2:
+        hits = [p for p in workspace.precedents if p.account in usable and (
+            _key(p.text) == key or (min(len(key), len(_key(p.text))) >= 4 and (_key(p.text) in key or key in _key(p.text))))]
+        if hits:
+            best = max(hits, key=lambda p: p.count)
+            return best.account, f"{GUESS} · 이전 장부 '{best.text}' → {names.get(best.account, best.account)} ({best.count}회)"
+    text = " ".join(_texts(r)).upper()
+    for code, words in ACCOUNT_KEYWORDS:
+        word = next((w for w in words if w.upper() in text), None)
+        if word and code in usable:
+            return code, f"{GUESS} · '{word}' 포함 → {names.get(code, code)}"
+    if DEFAULT_EXPENSE in usable:
+        return DEFAULT_EXPENSE, f"{GUESS} · 단서 없음 → 일반 경비 {names.get(DEFAULT_EXPENSE, '')} · 확인 필요"
+    return "", ""
+
+
+def guess_purpose(r: ReceiptRecord, receipts: list[ReceiptRecord], workspace: Workspace) -> tuple[str, str]:
+    """What this merchant was used for before, else the first item, else merchant + account name."""
+    key = _key(r.merchant)
+    for past in sorted(receipts, key=lambda x: x.confirmed_at or "", reverse=True):
+        if past.id != r.id and past.confirmed and past.purpose.strip() and key and _key(past.merchant) == key:
+            return past.purpose, f"{GUESS} · 같은 상호의 이전 확정 전표 {past.id} 적요"
+    ext = r.extraction
+    item = next((i.description.strip() for i in (ext.line_items if ext else []) if i.description.strip()), "")
+    if item:
+        return item[:30], f"{GUESS} · 영수증 첫 품목"
+    if not r.merchant.strip():
+        return "", ""
+    account = next((a.name for a in workspace.accounts if a.code == r.account), "")
+    return f"{r.merchant.strip()} {account or '사용'}", f"{GUESS} · 상호{'·계정' if account else ''}으로 적요 작성"
 
 
 def fill_vendor_business(workspace: Workspace, vendor: Vendor, merchant: str, business: str | None) -> bool:
@@ -118,14 +201,14 @@ def autofill(
     if vendor and ext:
         workspace_changed |= fill_vendor_business(workspace, vendor, ext.merchant, ext.business_number)
 
-    if vendor and vendor.account and not r.account:
-        _fill(r, "account", vendor.account, f"{vendor.name}의 기본 계정")
-    if not r.account:
+    if vendor:
+        vendor_defaults(r, vendor)
+    if _open(r, "account"):
         code, reason = ledger.suggest_account(r, receipts)
-        if code:
+        if not code:
+            code, reason = guess_account(r, workspace)
+        if code and (r.account, r.autofilled.get("account")) != (code, reason):
             _fill(r, "account", code, reason)
-    if vendor and vendor.purpose and not r.purpose.strip():
-        _fill(r, "purpose", vendor.purpose, f"{vendor.name}의 기본 적요")
 
     card_slip = bool(ext and ext.approval_number and not invoice_review.invoice(r))
     if invoice_review.invoice(r):
@@ -134,8 +217,12 @@ def autofill(
             _fill(r, "tax", int(ext.tax), "전자세금계산서 표시 세액")
         if not r.evidence.strip():
             _fill(r, "evidence", f"전자세금계산서 · 승인번호 {ext.approval_number} · 공급자 {ext.business_number}", "전자세금계산서")
-        if not r.purpose.strip() and ext.line_items:
+        if _open(r, "purpose") and ext.line_items:
             _fill(r, "purpose", ext.line_items[0].description, "전자세금계산서 품목")
+    if _open(r, "purpose"):
+        text, reason = guess_purpose(r, receipts, workspace)
+        if text and (r.purpose, r.autofilled.get("purpose")) != (text, reason):
+            _fill(r, "purpose", text, reason)
     if card_slip and r.vat == "pending":
         tax = int(ext.tax)
         if not ext.business_number:

@@ -488,6 +488,6 @@ function Auto({ r, f }: { r: Receipt; f: string }) {
   return <span data-field={f} data-missing={missing || undefined} className={s.fieldMark}>
     {why && !r.confirmed && (isAi(why)
       ? <small className={s.aiTag} title={why}><Sparkles size={10}/> AI 추천</small>
-      : <small className={s.autoTag} title={why}><Sparkles size={10}/> 자동</small>)}
+      : <small className={s.autoTag} title={why}><Sparkles size={10}/> {why.startsWith("추정") ? "추정 · 확인" : "자동"}</small>)}
   </span>;
 }
