@@ -7,7 +7,7 @@ export type Vendor = { code: string; name: string; alias: string; aliases?: stri
 export type BankAccount = { code: string; name: string; number: string; account: string };
 export type Card = { code: string; name: string; number: string; bank: string; payable: boolean };
 export type CompanyProfile = { company: string; business_number: string; representative: string; opened: string; business_type: string; capital: number; shareholders: string[]; officers: string[]; summary: string; error: string };
-export type Precedent = { text: string; account: string; count: number };
+export type Precedent = { text: string; account: string; count: number; sources?: PrecedentSource[] };
 export type Workspace = {
   profile?: CompanyProfile | null; company: string; year: string; accounts: Account[]; vendors: Vendor[]; banks: BankAccount[]; cards: Card[];
   card_vat: "expense" | "deduct"; precedents: Precedent[]; precedent_source: string;
@@ -17,7 +17,9 @@ export type VatReturn = { id: string; period_start: string; period_end: string; 
 export type ReconcileRow = { business_number: string; name: string; kind: string; filed_count: number; filed_tax: number; book_count: number; book_tax: number; difference: number; status: string; zero_vat_receipts: string[] };
 export type Reconcile = { rows: ReconcileRow[]; filed_total: number; book_total: number; return_input_tax: number; matched: number; fixed?: string[] };
 export type SalesInvoice = { id: string; file_name: string; issued: string; customer: string; business_number: string; representative: string; item: string; supply: number; tax: number; revenue_account: string; note: string };
-export type AiSuggestion = { account: string; tax: number; vendor: string; purpose: string; reason: string; confidence: number; model: string; at: string };
+export type PrecedentSource = { file_name: string; sheet: string; row_number: number; date: string };
+export type Evidence = { source_type: "receipt" | "bank" | "precedent"; source_id: string; description: string; account: string; account_name: string; date: string; amount: number | null; purpose: string; reason: string; path: string[]; sources: PrecedentSource[] };
+export type AiSuggestion = { account: string; tax: number; vendor: string; purpose: string; reason: string; confidence: number; model: string; at: string; evidence?: Evidence[]; retrieval_version?: string };
 
 export type Extraction = {
   merchant: string; purchased_at: string; total: string; tax: string; payment_method: string;
@@ -162,6 +164,7 @@ export const api = {
     return request<WorkspaceProposal>("/workspace/from-statements", { method: "POST", body: form });
   },
   receipts: () => request<Receipt[]>("/receipts"),
+  receipt: (id: string) => request<Receipt>(`/receipts/${encodeURIComponent(id)}`),
   uploadReceipt: (file: File) => request<Receipt>("/receipts", upload(file)),
   updateReceipt: (id: string, changes: Partial<Review>) => request<Receipt>(`/receipts/${id}`, json("PATCH", changes)),
   reextract: (id: string) => request<Receipt>(`/receipts/${id}/extract`, { method: "POST" }),

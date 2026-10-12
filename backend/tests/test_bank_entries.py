@@ -175,7 +175,7 @@ class AiJudgeTests(unittest.TestCase):
         items = [{"id": "a", "description": "김태윤"}, {"id": "b", "description": "OTP발급"}]
         fake = FakeClient(answer)
         with patch("app.services.llm.anthropic.Anthropic", return_value=fake):
-            result = ai_judge.recommend(items, ws, [], CLAUDE)
+            result = ai_judge.recommend(items, ws, {}, CLAUDE)
         self.assertEqual(set(result), {"a"})  # 99999 is not in the chart
         self.assertEqual((result["a"].account, result["a"].model), ("33100", "Claude claude-haiku-5-5"))
         request = fake.requests[0]
@@ -193,18 +193,18 @@ class AiJudgeTests(unittest.TestCase):
             return answer(item) if calls.count(item["id"]) > 1 or item["id"] != "b" else {**answer(item), "id": "zz"}
 
         with patch("app.services.llm.anthropic.Anthropic", return_value=FakeClient(skip_first)):
-            result = ai_judge.recommend([{"id": "a", "description": "김태윤"}, {"id": "b", "description": "x"}], company(), [], CLAUDE)
+            result = ai_judge.recommend([{"id": "a", "description": "김태윤"}, {"id": "b", "description": "x"}], company(), {}, CLAUDE)
         self.assertEqual(set(result), {"a", "b"})
         self.assertEqual(calls, ["a", "b", "b"])
 
-    def test_same_counterparty_gets_one_account(self):
-        items = [{"id": str(i), "type": "통장 거래", "direction": "출금", "description": d} for i, d in
-                 enumerate(["2462 스타벅스 코리아", "2462 스타벅스 코리아", "2462 스타벅스 코리아", "2462 투썸플레이스"])]
-        result = {"0": AiSuggestion(account="81200", confidence=0.7), "1": AiSuggestion(account="81200", confidence=0.6),
-                  "2": AiSuggestion(account="81100", confidence=0.9), "3": AiSuggestion(account="81100", confidence=0.8)}
-        out = ai_judge._consistent(items, result)
-        self.assertEqual([out[i].account for i in "0123"], ["81200", "81200", "81200", "81100"])
-        self.assertIn("같은 거래처 3건 중 2건", out["2"].reason)
+    def test_same_counterparty_can_have_different_accounts(self):
+        items = [{"id": "a", "description": "같은 상점", "purpose": "직원 간식"},
+                 {"id": "b", "description": "같은 상점", "purpose": "거래처 선물"}]
+        def different(item):
+            return {**answer(item), "account": "81100" if item["id"] == "a" else "81300"}
+        with patch("app.services.llm.anthropic.Anthropic", return_value=FakeClient(different)):
+            result = ai_judge.recommend(items, company(), {}, CLAUDE)
+        self.assertEqual([result[i].account for i in ("a", "b")], ["81100", "81300"])
 
     def test_suggestion_never_overrides_a_person(self):
         entry = BankEntry(tx_id="T-1", account="81100")  # typed by a person: no autofilled reason

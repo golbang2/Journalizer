@@ -144,10 +144,18 @@ class Workspace(BaseModel):
     ai_model: str = ""
 
 
+class PrecedentSource(BaseModel):
+    file_name: str
+    sheet: str
+    row_number: int
+    date: str = ""  # Preserve the original label; do not invent a year for MM-DD.
+
+
 class Precedent(BaseModel):
     text: str  # 적요 or 거래처 as it appeared
     account: str
     count: int = 1
+    sources: list[PrecedentSource] = Field(default_factory=list)
 
 
 class VatReturn(BaseModel):
@@ -220,6 +228,22 @@ class SalesInvoice(BaseModel):
     note: str = ""
 
 
+class RecommendationEvidence(BaseModel):
+    """Server-selected context snapshot, not a claim that the model cited this source."""
+
+    source_type: Literal["receipt", "bank", "precedent"]
+    source_id: str
+    description: str
+    account: str
+    account_name: str = ""
+    date: str = ""
+    amount: int | None = None
+    purpose: str = ""
+    reason: str
+    path: list[str] = Field(default_factory=list)
+    sources: list[PrecedentSource] = Field(default_factory=list)
+
+
 class AiSuggestion(BaseModel):
     """One accounting recommendation from the model. Shown highlighted until a person confirms it."""
 
@@ -231,6 +255,8 @@ class AiSuggestion(BaseModel):
     confidence: float = 0
     model: str = ""
     at: str = ""
+    evidence: list[RecommendationEvidence] = Field(default_factory=list)
+    retrieval_version: str = ""
 
 
 class ReceiptReview(BaseModel):

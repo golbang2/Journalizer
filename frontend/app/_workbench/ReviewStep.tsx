@@ -5,6 +5,7 @@ import { ArrowRight, Check, CheckCircle2, Copy, ExternalLink, FileText, Layers, 
 import { api, autoMessage, fileUrl, isAi, isDone, money, type BankTransaction, type PaymentCandidate, type Receipt, type Review, type Workspace } from "./api";
 import type { Notify } from "./Workbench";
 import MoneyInput from "./MoneyInput";
+import RecommendationEvidence from "./RecommendationEvidence";
 import s from "./workbench.module.css";
 
 type Props = {
@@ -378,6 +379,7 @@ function ReceiptEditor({ receipt, receipts, workspace, transactions, onReceipt, 
         {r.duplicate_of && <div className={s.warnBox}><Copy size={14}/><span>{r.duplicate_of}와 같은 영수증(승인번호·금액·날짜 동일)입니다. 중복으로 비용이 두 번 잡히지 않도록 이 영수증은 삭제하세요.</span>{!r.confirmed && <button className={s.secondary} onClick={remove}>이 영수증 삭제</button>}</div>}
         {!r.confirmed && Object.keys(r.autofilled).length > 0 && <div className={s.autoSummary}><Sparkles size={14}/><div><b>{Object.keys(r.autofilled).length}개 항목을 자동으로 채웠습니다.</b> 내용이 맞는지 확인하세요. 직접 고치면 자동 표시가 사라집니다.
           {r.ai && <p className={s.aiReason}>{r.ai.model} 추천 · 신뢰도 {Math.round(r.ai.confidence * 100)}% — {r.ai.reason}</p>}
+          {r.ai && <RecommendationEvidence suggestion={r.ai}/>}
           <ul>{Object.entries(r.autofilled).filter(([f]) => !["payment_date", "bank", "payment_transaction_id", "payment_link"].includes(f)).map(([f, why]) => <li key={f}><span>{FIELD_NAMES[f] ?? f}</span>{why}</li>)}</ul></div></div>}
         <fieldset disabled={r.confirmed} className={s.formBody}>
           <h3><span>01</span> 사용 목적과 귀속</h3><div className={s.fields}>

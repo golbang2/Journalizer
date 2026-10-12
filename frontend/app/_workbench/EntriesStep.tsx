@@ -5,6 +5,7 @@ import { ArrowRight, Check, ChevronDown, ChevronRight, Link2, Loader2, RefreshCw
 import { api, autoMessage, isAi, money, type Entry, type EntryReview, type Workspace } from "./api";
 import type { Notify } from "./Workbench";
 import MoneyInput from "./MoneyInput";
+import RecommendationEvidence from "./RecommendationEvidence";
 import s from "./workbench.module.css";
 
 type Filter = "all" | "person" | "ai" | "missing" | "receipt" | "confirmed";
@@ -152,6 +153,7 @@ export default function EntriesStep({ workspace, notify, onReceipts, onLedger }:
                     <td>{l.account} {name(l.account)}</td><td>{l.vendor}</td><td className={s.num}>{l.debit ? money(l.debit) : ""}</td><td className={s.num}>{l.credit ? money(l.credit) : ""}</td></tr>)}</tbody></table>
                     : <p>{e.covered_by ? `${e.covered_by}의 전표에 포함됩니다.` : "분개할 내용이 없습니다."}</p>}
                   {e.ai && <p className={s.aiReason}><Sparkles size={11}/> {e.ai.model} · 신뢰도 {Math.round(e.ai.confidence * 100)}%{lowConfidence ? " (낮음 · 꼭 확인)" : ""} — {e.ai.reason}</p>}
+                  {e.ai && <RecommendationEvidence suggestion={e.ai}/>}
                   {Object.entries(e.autofilled).filter(([, why]) => !isAi(why)).map(([f, why]) => <p key={f} className={s.noteText}>규칙 · {why}</p>)}
                 </div>
                 {!e.covered_by && <div className={s.fields}>

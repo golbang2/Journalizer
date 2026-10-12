@@ -860,7 +860,7 @@ def _run_ai(store: Store, entry_ids: set[str] | None = None, receipt_ids: set[st
     try:
         if not ai_enabled():
             raise ai_judge.AiJudgeError("AI 판단이 꺼져 있습니다 (AI_JUDGE=off).")
-        suggestions = ai_judge.recommend(items, workspace, ai_judge.examples(views, receipts, workspace), client)
+        suggestions = ai_judge.recommend(items, workspace, ai_judge.examples(items, views, receipts, workspace), client)
     except ai_judge.AiJudgeError as exc:
         suggestions, error = {}, str(exc)
     for item_id, suggestion in suggestions.items():

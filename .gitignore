@@ -24,3 +24,10 @@ backend/data/
 /test_data/
 /output/
 /tmp/
+
+# PowerPoint files
+*.[pP][pP][tT]
+*.[pP][pP][tT][xX]
+*.[pP][pP][tT][mM]
+*.[pP][oO][tT][xX]
+*.[pP][pP][sS][xX]

@@ -132,3 +132,5 @@
 .hometaxPanel td:nth-child(3){width:27%}.hometaxPanel .tableSub{font-size:11px!important;color:#64748b;line-height:1.6}
 .hometaxPanel td p{margin:6px 0}.hometaxPanel td button{margin:5px 0}.hometaxPanel td details{max-width:260px}
 @media(max-width:640px){.hometaxPanel>.sourceGrid{grid-template-columns:1fr}.hometaxPanel .bulkActions>input{max-width:none}}
+
+.recommendationEvidence{margin:12px 0;padding:12px;border:1px solid #dbe3ee;border-radius:8px;font-size:12px;overflow-wrap:anywhere}.recommendationEvidence summary{cursor:pointer;font-weight:600;color:#324b73}.recommendationEvidence p{line-height:1.6;color:#637085}.recommendationEvidence ul{padding-left:18px;display:grid;gap:14px}.recommendationEvidence li>span,.recommendationEvidence li>small{display:block;margin-top:4px;line-height:1.5}.recommendationEvidence li>small{color:#637085}.recommendationEvidence button{margin-top:6px}.evidenceCurrent{display:grid;gap:6px;margin-top:8px;padding:10px;background:#f3f6fa;border-radius:6px}

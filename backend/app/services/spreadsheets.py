@@ -130,7 +130,8 @@ def _sheet_names(archive: zipfile.ZipFile, budget: _Budget) -> list[tuple[str, s
     return found
 
 
-def _sheet_rows(archive: zipfile.ZipFile, name: str, shared: list[str], budget: _Budget) -> Rows:
+def _sheet_rows(archive: zipfile.ZipFile, name: str, shared: list[str], budget: _Budget,
+                preserve_row_numbers: bool = False) -> Rows:
     rows: Rows = []
     values: list[str] = []
     container = None
@@ -140,6 +141,15 @@ def _sheet_rows(archive: zipfile.ZipFile, name: str, shared: list[str], budget: 
                 container = elem
             elif elem.tag == f"{_NS}row":
                 values = []
+                if preserve_row_numbers:
+                    # XLSX can omit empty rows entirely. Keep source locations accurate
+                    # without letting a sparse row index bypass the allocation budget.
+                    position = elem.get("r", str(len(rows) + 1))
+                    if not position.isdigit() or not len(rows) < int(position) <= MAX_ROWS:
+                        raise SpreadsheetError("엑셀 행 번호가 올바르지 않거나 허용 범위를 넘었습니다.")
+                    for _ in range(int(position) - len(rows) - 1):
+                        budget.row()
+                        rows.append([])
             continue
         if elem.tag == f"{_NS}c":
             budget.cell()
@@ -177,7 +187,7 @@ def _sheet_rows(archive: zipfile.ZipFile, name: str, shared: list[str], budget: 
     return rows
 
 
-def xlsx_sheets(content: bytes, first_only: bool = False) -> list[tuple[str, Rows]]:
+def xlsx_sheets(content: bytes, first_only: bool = False, *, preserve_row_numbers: bool = False) -> list[tuple[str, Rows]]:
     budget = _Budget()
     try:
         archive = zipfile.ZipFile(io.BytesIO(content))
@@ -187,7 +197,7 @@ def xlsx_sheets(content: bytes, first_only: bool = False) -> list[tuple[str, Row
             raise SpreadsheetError("엑셀(.xlsx) 파일에 시트가 없습니다.")
         if first_only:
             sheets = sheets[:1]
-        return [(title, _sheet_rows(archive, name, shared, budget)) for title, name in sheets]
+        return [(title, _sheet_rows(archive, name, shared, budget, preserve_row_numbers)) for title, name in sheets]
     except (zipfile.BadZipFile, zipfile.LargeZipFile, ET.ParseError, KeyError, EOFError, NotImplementedError) as exc:
         raise SpreadsheetError("엑셀(.xlsx) 파일을 읽을 수 없습니다.") from exc
 
