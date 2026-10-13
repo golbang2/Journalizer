@@ -118,6 +118,9 @@ class CompanyProfile(BaseModel):
     representative: str = ""
     opened: str = ""
     business_type: str = ""  # 업태 · 종목
+    address: str = ""  # 본점 소재지
+    fiscal_start: str = ""  # 사업연도 시작 "MM-DD" (법인 사업자등록증)
+    fiscal_end: str = ""  # 사업연도 끝 "MM-DD"
     capital: int = 0
     shareholders: list[str] = Field(default_factory=list)
     officers: list[str] = Field(default_factory=list)

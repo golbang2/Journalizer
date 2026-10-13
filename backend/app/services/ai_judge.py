@@ -153,7 +153,8 @@ def profile_text(workspace: Workspace) -> str:
     parts = [
         f"회사명 {p.company or workspace.company}", f"사업자등록번호 {p.business_number}" if p.business_number else "",
         f"대표자 {p.representative}" if p.representative else "", f"개업일 {p.opened}" if p.opened else "",
-        f"업태·종목 {p.business_type}" if p.business_type else "", f"자본금 {p.capital:,}원" if p.capital else "",
+        f"업태·종목 {p.business_type}" if p.business_type else "",
+        f"사업연도 {p.fiscal_start}~{p.fiscal_end}" if p.fiscal_start and p.fiscal_end else "", f"자본금 {p.capital:,}원" if p.capital else "",
         f"주주 {', '.join(p.shareholders)}" if p.shareholders else "", f"임원 {', '.join(p.officers)}" if p.officers else "",
         p.summary,
     ]
@@ -212,17 +213,21 @@ PROFILE_PROMPT = """\
 첨부한 회사 서류(사업자등록증, 법인 등기사항증명서, 주주명부)에서 회사 정보를 읽어 주세요.
 없는 항목은 빈 값(숫자는 0)으로 두세요. business_type에는 업태와 종목을 함께 적고,
 shareholders에는 "이름 (지분 또는 주식 수)" 형식으로, officers에는 "직위 이름" 형식으로 적습니다.
+address에는 본점 소재지를, opened에는 개업일(없으면 회사성립연월일)을 YYYY-MM-DD로 적습니다.
+fiscal_start와 fiscal_end에는 사업자등록증의 사업연도를 "MM-DD"로 적습니다(예: 01-01, 12-31).
 summary에는 회사가 하는 일을 한 문장으로 적습니다."""
 
 PROFILE_SCHEMA = {
     "type": "object",
     "properties": {
         "company": {"type": "string"}, "business_number": {"type": "string"}, "representative": {"type": "string"},
-        "opened": {"type": "string"}, "business_type": {"type": "string"}, "capital": {"type": "integer"},
+        "opened": {"type": "string"}, "business_type": {"type": "string"}, "address": {"type": "string"},
+        "fiscal_start": {"type": "string"}, "fiscal_end": {"type": "string"}, "capital": {"type": "integer"},
         "shareholders": {"type": "array", "items": {"type": "string"}}, "officers": {"type": "array", "items": {"type": "string"}},
         "summary": {"type": "string"},
     },
-    "required": ["company", "business_number", "representative", "opened", "business_type", "capital", "shareholders", "officers", "summary"],
+    "required": ["company", "business_number", "representative", "opened", "business_type", "address", "fiscal_start", "fiscal_end",
+                 "capital", "shareholders", "officers", "summary"],
     "additionalProperties": False,
 }
 

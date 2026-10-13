@@ -114,6 +114,24 @@ class AccountTests(unittest.TestCase):
             c.post("/company/documents/business", files={"file": ("new.pdf", b"%PDF-1.7", "application/pdf")})
             self.assertEqual(read.call_count, 2)  # new documents are read again
 
+    def test_signup_documents_can_be_read_again_for_company_tab(self):
+        from unittest.mock import patch
+        from app.models import CompanyProfile
+        from app.services import ai_judge
+
+        c = self.client()
+        self.signup(c, "owner@example.com")
+        with patch.dict("os.environ", {"AI_JUDGE": "on"}):
+            self.assertEqual(c.post("/company/profile").status_code, 422)  # documents first
+            with patch("app.services.ai_judge.read_profile", side_effect=ai_judge.AiJudgeError("API 키가 없습니다.")):
+                for kind in ("registry", "shareholders", "business"):
+                    c.post(f"/company/documents/{kind}", files={"file": (f"{kind}.pdf", b"%PDF-1.7", "application/pdf")})
+            read = CompanyProfile(company="주식회사 더블락", business_number="123-81-45678", fiscal_start="01-01", fiscal_end="12-31")
+            with patch("app.services.ai_judge.read_profile", return_value=read):
+                ws = c.post("/company/profile").json()
+        self.assertEqual(ws["company"], "주식회사 더블락")
+        self.assertEqual((ws["profile"]["business_number"], ws["profile"]["fiscal_end"], ws["profile"]["error"]), ("123-81-45678", "12-31", ""))
+
     def test_company_ai_key_is_checked_and_masked(self):
         from unittest.mock import patch
         from app.services import llm

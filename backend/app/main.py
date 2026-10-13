@@ -197,6 +197,23 @@ async def upload_document(kind: str, file: UploadFile = File(...), store: Store 
     return _documents(store)
 
 
+@app.post("/company/profile", response_model=Workspace)
+async def read_company_profile(store: Store = Depends(get_store), meter: Meter = Depends(get_meter)) -> Workspace:
+    """Read the signup documents again, e.g. after the AI key was registered or a reading failed."""
+    if not ai_enabled():
+        raise HTTPException(status_code=422, detail="AI 판단이 꺼져 있어 서류를 읽을 수 없습니다.")
+    if not set(REQUIRED_DOCUMENTS) <= set(store.documents()):
+        raise HTTPException(status_code=422, detail="등기부등본·주주명부·사업자등록증을 모두 올려야 회사 정보를 읽을 수 있습니다.")
+    meter.charge("profile")
+    workspace = store.workspace()
+    workspace.profile = None
+    store.save_workspace(workspace)
+    error = await run_in_threadpool(_ensure_profile, store)
+    if error:
+        raise HTTPException(status_code=422, detail=error)
+    return store.workspace()
+
+
 @app.get("/company/documents/{kind}/file")
 def document_file(kind: str, store: Store = Depends(get_store)) -> Response:
     original = store.document_file(kind)
@@ -796,6 +813,8 @@ async def put_ai_settings(body: AiSettings, store: Store = Depends(get_store)) -
         raise HTTPException(status_code=422, detail=f"이 키로는 {body.model} 모델을 쓸 수 없습니다.")
     keep = workspace.ai_model if workspace.ai_provider == body.provider and workspace.ai_model in models else ""
     workspace.ai_provider, workspace.ai_model = body.provider, body.model or keep or llm.default_model(body.provider, models)
+    if workspace.profile and workspace.profile.error:
+        workspace.profile = None  # e.g. the documents were uploaded before any key: read them with this one
     store.save_workspace(workspace)
     return _ai_status(store, models)
 

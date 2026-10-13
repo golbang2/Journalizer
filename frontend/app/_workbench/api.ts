@@ -6,7 +6,7 @@ export type Account = { code: string; name: string; normal: "debit" | "credit"; 
 export type Vendor = { code: string; name: string; alias: string; aliases?: string[]; payment_aliases?: string[]; business: string; account: string; purpose: string; auto: boolean };
 export type BankAccount = { code: string; name: string; number: string; account: string };
 export type Card = { code: string; name: string; number: string; bank: string; payable: boolean };
-export type CompanyProfile = { company: string; business_number: string; representative: string; opened: string; business_type: string; capital: number; shareholders: string[]; officers: string[]; summary: string; error: string };
+export type CompanyProfile = { company: string; business_number: string; representative: string; opened: string; business_type: string; address?: string; fiscal_start?: string; fiscal_end?: string; capital: number; shareholders: string[]; officers: string[]; summary: string; error: string };
 export type Precedent = { text: string; account: string; count: number; sources?: PrecedentSource[] };
 export type Workspace = {
   profile?: CompanyProfile | null; company: string; year: string; accounts: Account[]; vendors: Vendor[]; banks: BankAccount[]; cards: Card[];
@@ -200,6 +200,7 @@ export const api = {
   deleteSalesInvoice: (id: string) => request<void>(`/sales-invoices/${encodeURIComponent(id)}`, { method: "DELETE" }),
   documents: () => request<CompanyDocument[]>("/company/documents"),
   uploadDocument: (kind: string, file: File) => request<CompanyDocument[]>(`/company/documents/${kind}`, upload(file)),
+  readProfile: () => request<Workspace>("/company/profile", { method: "POST" }),
   statements: () => request<Statements>("/reports/statements"),
   vatReturns: () => request<VatReturn[]>("/vat-returns"),
   bookedVat: (start: string, end: string) => request<{ output_tax: number; input_tax: number }>(`/vat-returns/booked?start=${start}&end=${end}`),

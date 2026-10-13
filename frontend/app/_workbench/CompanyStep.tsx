@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { ArrowRight, Plus, Save, Trash2 } from "lucide-react";
-import { api, type Account, type BankAccount, type Card, type Vendor, type Workspace } from "./api";
+import { useEffect, useRef, useState } from "react";
+import { ArrowRight, FileText, Loader2, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
+import { api, money, type Account, type BankAccount, type Card, type Vendor, type Workspace } from "./api";
 import type { Notify } from "./Workbench";
 import StatementSetup, { type PendingImport } from "./StatementSetup";
 import MoneyInput from "./MoneyInput";
@@ -12,6 +12,14 @@ import s from "./workbench.module.css";
 const kinds: [Account["kind"], string][] = [["expense", "비용"], ["revenue", "수익"], ["asset", "자산"], ["liability", "부채"], ["equity", "자본"], ["other", "기타"]];
 const thisYear = new Date().getFullYear();
 const years = Array.from({ length: 8 }, (_, i) => String(thisYear - 5 + i));
+const mmdd = (v = "") => /^\d{2}-\d{2}$/.test(v) ? v : "";
+
+/** "2026.01.01 ~ 2026.12.31", following the 사업연도 on the 사업자등록증 when it was read. */
+function period(year: string, start = "", end = "") {
+  const [from, to] = [mmdd(start) || "01-01", mmdd(end) || "12-31"];
+  const endYear = to < from ? String(Number(year) + 1) : year;
+  return { text: `${year}.${from.replace("-", ".")} ~ ${endYear}.${to.replace("-", ".")}`, calendar: from === "01-01" && to === "12-31" };
+}
 
 type Props = { workspace: Workspace; onSaved: (ws: Workspace) => Promise<void>; onTransactionsChanged: () => Promise<void>; notify: Notify; onNext: () => void };
 
@@ -48,6 +56,34 @@ export default function CompanyStep({ workspace, onSaved, onTransactionsChanged,
     await onSaved({ ...workspace, precedents: [], precedent_source: "" });
   };
 
+  const [reading, setReading] = useState(false);
+  const readProfile = async (quiet = false) => {
+    setReading(true);
+    try {
+      await onSaved(await api.readProfile());
+      notify("등록한 회사 서류에서 회사 정보를 읽었습니다.");
+    } catch (error) {
+      if (!quiet) notify((error as Error).message, "error");
+      await onSaved(await api.workspace()).catch(() => undefined);  // shows the stored reading error
+    } finally {
+      setReading(false);
+    }
+  };
+  // Documents uploaded at signup but not read yet (e.g. no AI key then): read them when this tab opens.
+  const autoRead = useRef(false);
+  useEffect(() => {
+    if (workspace.profile === null && !autoRead.current) { autoRead.current = true; readProfile(true); }
+  }, [workspace.profile]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const profile = workspace.profile;
+  const fiscal = period(draft.year, profile?.fiscal_start, profile?.fiscal_end);
+  const facts = profile && !profile.error ? ([
+    ["상호", profile.company], ["사업자등록번호", profile.business_number], ["대표자", profile.representative],
+    ["본점 소재지", profile.address ?? ""], ["개업일", profile.opened], ["업태·종목", profile.business_type],
+    ["사업연도", mmdd(profile.fiscal_start) && mmdd(profile.fiscal_end) ? `${profile.fiscal_start} ~ ${profile.fiscal_end}` : ""],
+    ["자본금", profile.capital ? `${money(profile.capital)}원` : ""], ["주주", profile.shareholders.join(", ")], ["임원", profile.officers.join(", ")],
+  ] as [string, string][]).filter(([, v]) => v) : [];
+
   const save = async () => {
     setSaving(true);
     try {
@@ -80,7 +116,19 @@ export default function CompanyStep({ workspace, onSaved, onTransactionsChanged,
       <label>회사명<input value={draft.company} placeholder="예: 주식회사 더블락" onChange={e => set({ company: e.target.value })}/></label>
       <label>회계연도<select value={draft.year} onChange={e => set({ year: e.target.value })}>{Array.from(new Set([...years, draft.year])).sort().map(y => <option key={y}>{y}</option>)}</select></label>
       <label>기장 통화<input value="KRW · 대한민국 원" readOnly/></label>
-    </div><p className={s.helper}>기간: {draft.year}.01.01 ~ {draft.year}.12.31 · 영수증 거래일과 전기일은 따로 관리합니다.</p></section>
+    </div><p className={s.helper}>기간: {fiscal.text} · 영수증 거래일과 전기일은 따로 관리합니다.
+      {!fiscal.calendar && " 서류의 사업연도가 1월~12월이 아닙니다. 장부는 현재 회계연도의 1월~12월 거래로 집계하니 확인하세요."}</p>
+    <div className={s.cardHeading}><div><h3><FileText size={14}/> 등록 서류에서 읽은 회사 정보</h3><p>회원 가입 때 올린 등기부등본·주주명부·사업자등록증 기준입니다.</p></div>
+      <span>
+        {profile?.company && profile.company !== draft.company && <button className={s.secondary} onClick={() => set({ company: profile.company })}>회사명을 서류 상호로</button>}
+        <button className={s.secondary} disabled={reading || dirty} title={dirty ? "변경 사항을 저장하거나 되돌린 뒤 다시 읽으세요." : undefined} onClick={() => readProfile()}>
+          {reading ? <Loader2 className={s.spin} size={14}/> : <RefreshCw size={14}/>} 서류 다시 읽기</button>
+      </span></div>
+    {reading && !facts.length ? <p className={s.helper}><Loader2 className={s.spin} size={12}/> 서류를 읽는 중입니다</p>
+      : profile?.error ? <p className={s.helper}>서류를 읽지 못했습니다: {profile.error}</p>
+      : facts.length ? <div className={s.proposalGrid}>{facts.map(([k, v]) => <div key={k} className={s.pick}><span><small>{k}</small><b>{v}</b></span></div>)}</div>
+      : <p className={s.helper}>아직 읽은 회사 정보가 없습니다. 메인 화면의 ‘AI 연결’을 마친 뒤 ‘서류 다시 읽기’를 누르세요.</p>}
+    </section>
 
     <section className={s.card}><div className={s.cardHeading}><div><h2>회사 계정과 기초잔액</h2><p>분류가 ‘비용’인 계정만 영수증 비용 계정으로 고를 수 있습니다.</p></div>
       <button className={s.secondary} onClick={() => set({ accounts: [...draft.accounts, { code: "", name: "", normal: "debit", opening: 0, kind: "expense" }] })}><Plus size={14}/> 계정 추가</button></div>
