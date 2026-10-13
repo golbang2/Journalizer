@@ -57,6 +57,8 @@ app = FastAPI(title="Journalizer API", version="0.3.0")
 
 from app.hometax_routes import router as hometax_router
 app.include_router(hometax_router)
+from app.policy_routes import router as policy_router
+app.include_router(policy_router)
 
 app.add_middleware(RequestSizeLimit)
 app.add_middleware(  # outermost, so 413/429 answers still carry CORS headers
@@ -233,6 +235,9 @@ def put_workspace(workspace: Workspace, store: Store = Depends(get_store)) -> Wo
         raise HTTPException(status_code=422, detail="회계연도는 네 자리 연도여야 합니다.")
     workspace.vendors = [v for v in workspace.vendors if v.code.strip() or v.name.strip()]
     before = store.workspace()
+    usable = set(codes) - {b.account for b in workspace.banks} - {"25300", "40000"}
+    if any(rule.account not in usable for p in before.policies if p.status == "approved" for rule in p.rules):
+        raise HTTPException(status_code=422, detail="승인 정책에 연결된 계정은 삭제하거나 추천 제외 계정으로 바꿀 수 없습니다. 먼저 정책을 철회하세요.")
     workspace.profile = workspace.profile or before.profile
     saved = store.save_workspace(workspace)
     if before.card_vat != saved.card_vat:
@@ -886,7 +891,7 @@ AUTO_MIN_CONFIDENCE = 0.5
 
 def _unsure(autofilled: dict[str, str], ai) -> bool:
     """The model chose the account but said itself it was not sure: a person decides."""
-    return bool(ai and ai.confidence < AUTO_MIN_CONFIDENCE and autofilled.get("account", "").startswith(ai_judge.AI_PREFIX))
+    return bool(ai and (ai.review_required or (ai.confidence < AUTO_MIN_CONFIDENCE and autofilled.get("account", "").startswith(ai_judge.AI_PREFIX))))
 
 
 def auto_confirm() -> bool:
@@ -931,7 +936,7 @@ def _auto_process(store: Store) -> dict:
                 receipts_left[r.id] = "출금 후보를 확인해 연결하거나 미지급을 선택하세요."
                 continue
         if _unsure(r.autofilled, r.ai):
-            receipts_left[r.id] = "AI 확신 낮음 · 확인 필요"
+            receipts_left[r.id] = "정책 근거·예외 검토 필요" if r.ai and r.ai.review_required else "AI 확신 낮음 · 확인 필요"
             continue
         if autofill.guessed(r, "account"):
             receipts_left[r.id] = "비용 계정 추정 · 확인 필요"
@@ -951,7 +956,7 @@ def _auto_process(store: Store) -> dict:
             entries_left[view.tx_id] = "영수증 없는 이체 · 사람 확인 필수"
             continue
         if _unsure(view.autofilled, view.ai):
-            entries_left[view.tx_id] = "AI 확신 낮음 · 확인 필요"
+            entries_left[view.tx_id] = "정책 근거·예외 검토 필요" if view.ai and view.ai.review_required else "AI 확신 낮음 · 확인 필요"
             continue
         gaps = _confirm_entry(store, view)
         if gaps:

@@ -111,6 +111,13 @@ documents = Table(
     Column("uploaded_at", DateTime(timezone=True), nullable=False, default=utcnow),
 )
 
+policies = Table(
+    "accounting_policies", metadata,
+    Column("company_id", Id, ForeignKey("companies.id", ondelete="CASCADE"), primary_key=True),
+    Column("id", String(40), primary_key=True),
+    Column("data", Json, nullable=False),
+)
+
 secrets = Table(
     "company_secrets", metadata,  # e.g. the company's Claude API key; never returned to the browser in full
     Column("company_id", Id, ForeignKey("companies.id", ondelete="CASCADE"), primary_key=True),

@@ -18,8 +18,11 @@ export type ReconcileRow = { business_number: string; name: string; kind: string
 export type Reconcile = { rows: ReconcileRow[]; filed_total: number; book_total: number; return_input_tax: number; matched: number; fixed?: string[] };
 export type SalesInvoice = { id: string; file_name: string; issued: string; customer: string; business_number: string; representative: string; item: string; supply: number; tax: number; revenue_account: string; note: string };
 export type PrecedentSource = { file_name: string; sheet: string; row_number: number; date: string };
-export type Evidence = { source_type: "receipt" | "bank" | "precedent"; source_id: string; description: string; account: string; account_name: string; date: string; amount: number | null; purpose: string; reason: string; path: string[]; sources: PrecedentSource[] };
-export type AiSuggestion = { account: string; tax: number; vendor: string; purpose: string; reason: string; confidence: number; model: string; at: string; evidence?: Evidence[]; retrieval_version?: string };
+export type PolicyRule = { terms: string[]; account: string; exceptions: string[]; direction: "" | "출금" | "입금"; document_type: "" | "receipt" | "tax_invoice"; minimum: number; maximum: number | null };
+export type PolicyInput = { title: string; series: string; version: string; kind: "accounting" | "tax"; source: string; locator: string; text: string; effective_from: string; effective_to: string | null; rules: PolicyRule[] };
+export type AccountingPolicy = PolicyInput & { id: string; status: "draft" | "approved" | "retired"; created_at: string; approved_at: string };
+export type Evidence = { source_type: "receipt" | "bank" | "precedent" | "policy"; source_id: string; description: string; account: string; account_name: string; date: string; amount: number | null; purpose: string; reason: string; path: string[]; sources: PrecedentSource[]; policy_version?: string; policy_kind?: string; source?: string; locator?: string; policy_text?: string; exceptions?: string[] };
+export type AiSuggestion = { account: string; tax: number; vendor: string; purpose: string; reason: string; confidence: number; model: string; at: string; evidence?: Evidence[]; retrieval_version?: string; review_required?: boolean };
 
 export type Extraction = {
   merchant: string; purchased_at: string; total: string; tax: string; payment_method: string;
@@ -145,6 +148,10 @@ function upload(file: File, extra: Record<string, string> = {}): RequestInit {
 }
 
 export const api = {
+  policies: () => request<AccountingPolicy[]>("/policies"),
+  createPolicy: (body: PolicyInput) => request<AccountingPolicy>("/policies", json("POST", body)),
+  updatePolicy: (id: string, body: PolicyInput) => request<AccountingPolicy>(`/policies/${encodeURIComponent(id)}`, json("PUT", body)),
+  policyAction: (id: string, action: "approve" | "retire") => request<AccountingPolicy>(`/policies/${encodeURIComponent(id)}/${action}`, { method: "POST" }),
   importHometax: (file: File, kind: HometaxKind) => request<{ id: string; added: boolean; rows: number }>("/hometax/imports", upload(file, { kind })),
   hometaxReport: (start: string, end: string) => request<HometaxReport>(`/hometax/reconcile?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`),
   deleteHometax: (id: string) => request<void>(`/hometax/imports/${encodeURIComponent(id)}`, { method: "DELETE" }),

@@ -1,11 +1,12 @@
 """Company-scoped persistence: every query is filtered by the signed-in user's company."""
 from dataclasses import dataclass
+from datetime import date
 
 from sqlalchemy import delete, func, insert, select, update
 from sqlalchemy.engine import Engine
 
 from app import db
-from app.models import BankEntry, BankTransaction, HometaxImport, ReceiptRecord, SalesInvoice, VatReturn, Workspace
+from app.models import AccountingPolicy, BankEntry, BankTransaction, HometaxImport, ReceiptRecord, SalesInvoice, VatReturn, Workspace
 from app.services.ledger import default_workspace, missing_standard_accounts
 
 
@@ -25,17 +26,49 @@ class Store:
     def workspace(self) -> Workspace:
         with self.engine.connect() as c:
             data = c.execute(select(db.companies.c.workspace).where(db.companies.c.id == self.company_id)).scalar()
-        if not data:
-            return default_workspace()
-        workspace = Workspace.model_validate(data)
+        workspace = Workspace.model_validate(data) if data else default_workspace()
+        workspace.policies = self.policies()
         # Charts saved before the standard set grew lack 자본금, 매출, 결산 accounts; the AI can only pick listed codes.
         workspace.accounts += missing_standard_accounts(workspace)
         return workspace
 
     def save_workspace(self, workspace: Workspace) -> Workspace:
         with self.engine.begin() as c:
-            c.execute(update(db.companies).where(db.companies.c.id == self.company_id).values(workspace=workspace.model_dump(mode="json")))
+            c.execute(update(db.companies).where(db.companies.c.id == self.company_id).values(workspace=workspace.model_dump(mode="json", exclude={"policies"})))
+        workspace.policies = self.policies()
         return workspace
+
+    def policies(self) -> list[AccountingPolicy]:
+        t = db.policies.c
+        with self.engine.connect() as c:
+            rows = c.execute(select(t.data).where(t.company_id == self.company_id).order_by(t.id)).scalars()
+            return [AccountingPolicy.model_validate(row) for row in rows]
+
+    def save_policy(self, policy: AccountingPolicy, expected: AccountingPolicy | None = None) -> AccountingPolicy:
+        t = db.policies.c
+        # Serialize policy lifecycle changes per company, including PostgreSQL.
+        with self.engine.begin() as c:
+            c.execute(update(db.companies).where(db.companies.c.id == self.company_id).values(id=self.company_id))
+            current = c.execute(select(t.data).where(t.company_id == self.company_id, t.id == policy.id)).scalar()
+            if expected is not None and (not current or AccountingPolicy.model_validate(current) != expected):
+                raise ValueError("다른 요청에서 정책이 변경되었습니다. 새로고침 후 다시 확인하세요.")
+            if current and (current["status"] == "retired" or (current["status"] == "approved" and policy.status != "retired")):
+                raise ValueError("정책 상태가 변경되었습니다. 새로고침 후 다시 확인하세요.")
+            others = [AccountingPolicy.model_validate(row) for row in c.execute(
+                select(t.data).where(t.company_id == self.company_id, t.id != policy.id)).scalars()]
+            for other in others:
+                if other.series != policy.series:
+                    continue
+                if other.version == policy.version:
+                    raise ValueError("같은 정책의 버전은 중복될 수 없습니다.")
+                if policy.status == other.status == "approved" and (
+                    policy.effective_from <= (other.effective_to or date.max)
+                    and other.effective_from <= (policy.effective_to or date.max)
+                ):
+                    raise ValueError("같은 정책의 승인된 적용기간이 겹칩니다. 기존 버전을 철회한 뒤 기간을 조정한 새 버전을 등록하세요.")
+            c.execute(delete(db.policies).where(t.company_id == self.company_id, t.id == policy.id))
+            c.execute(insert(db.policies).values(company_id=self.company_id, id=policy.id, data=policy.model_dump(mode="json")))
+        return policy
 
     # Receipts ----------------------------------------------------------------
     def reserve_receipt_id(self) -> str:

@@ -134,3 +134,10 @@
 @media(max-width:640px){.hometaxPanel>.sourceGrid{grid-template-columns:1fr}.hometaxPanel .bulkActions>input{max-width:none}}
 
 .recommendationEvidence{margin:12px 0;padding:12px;border:1px solid #dbe3ee;border-radius:8px;font-size:12px;overflow-wrap:anywhere}.recommendationEvidence summary{cursor:pointer;font-weight:600;color:#324b73}.recommendationEvidence p{line-height:1.6;color:#637085}.recommendationEvidence ul{padding-left:18px;display:grid;gap:14px}.recommendationEvidence li>span,.recommendationEvidence li>small{display:block;margin-top:4px;line-height:1.5}.recommendationEvidence li>small{color:#637085}.recommendationEvidence button{margin-top:6px}.evidenceCurrent{display:grid;gap:6px;margin-top:8px;padding:10px;background:#f3f6fa;border-radius:6px}
+.policyForm { border: 1px solid #dce2e8; border-radius: 8px; padding: 16px; margin: 12px 0; min-width: 0; }
+.policyText { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
+.policyText textarea { width: 100%; box-sizing: border-box; font: inherit; padding: 10px; border: 1px solid #dce2e8; border-radius: 6px; }
+.policyActions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.policyRecord { padding: 12px 0; border-top: 1px solid #dce2e8; overflow-wrap: anywhere; }
+.policyRecord summary { cursor: pointer; font-weight: 600; }
+.policyOriginal { white-space: pre-wrap; max-height: 300px; overflow: auto; }

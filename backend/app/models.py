@@ -126,6 +126,7 @@ class CompanyProfile(BaseModel):
 
 
 class Workspace(BaseModel):
+    policies: list["AccountingPolicy"] = Field(default_factory=list)
     profile: CompanyProfile | None = None
     company: str = ""
     year: str = str(date.today().year)
@@ -228,10 +229,61 @@ class SalesInvoice(BaseModel):
     note: str = ""
 
 
+class PolicyRule(BaseModel):
+    terms: list[str] = Field(min_length=1, max_length=30)
+    account: str = Field(min_length=1, max_length=30)
+    exceptions: list[str] = Field(default_factory=list, max_length=30)
+    direction: Literal["", "출금", "입금"] = ""
+    document_type: Literal["", "receipt", "tax_invoice"] = ""
+    minimum: int = Field(default=0, ge=0)
+    maximum: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def valid_rule(self) -> "PolicyRule":
+        self.terms = list(dict.fromkeys(t.strip().lower() for t in self.terms if t.strip()))
+        self.exceptions = list(dict.fromkeys(t.strip().lower() for t in self.exceptions if t.strip()))
+        if not self.terms or any(len(t) > 100 for t in [*self.terms, *self.exceptions]):
+            raise ValueError("검색어는 1~100자로 입력하세요.")
+        if self.maximum is not None and self.maximum < self.minimum:
+            raise ValueError("최대 금액은 최소 금액 이상이어야 합니다.")
+        return self
+
+
+class PolicyInput(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    series: str = Field(min_length=1, max_length=100)
+    version: str = Field(min_length=1, max_length=50)
+    kind: Literal["accounting", "tax"] = "accounting"
+    source: str = Field(min_length=1, max_length=500)
+    locator: str = Field(min_length=1, max_length=200)
+    text: str = Field(min_length=1, max_length=20000)
+    effective_from: date
+    effective_to: date | None = None
+    rules: list[PolicyRule] = Field(min_length=1, max_length=30)
+
+    @model_validator(mode="after")
+    def valid_period(self) -> "PolicyInput":
+        for field in ("title", "series", "version", "source", "locator", "text"):
+            value = getattr(self, field).strip()
+            if not value:
+                raise ValueError("정책 정보는 공백일 수 없습니다.")
+            setattr(self, field, value)
+        if self.effective_to and self.effective_to < self.effective_from:
+            raise ValueError("적용 종료일은 시작일 이후여야 합니다.")
+        return self
+
+
+class AccountingPolicy(PolicyInput):
+    id: str
+    status: Literal["draft", "approved", "retired"] = "draft"
+    created_at: str
+    approved_at: str = ""
+
+
 class RecommendationEvidence(BaseModel):
     """Server-selected context snapshot, not a claim that the model cited this source."""
 
-    source_type: Literal["receipt", "bank", "precedent"]
+    source_type: Literal["receipt", "bank", "precedent", "policy"]
     source_id: str
     description: str
     account: str
@@ -242,6 +294,13 @@ class RecommendationEvidence(BaseModel):
     reason: str
     path: list[str] = Field(default_factory=list)
     sources: list[PrecedentSource] = Field(default_factory=list)
+    policy_version: str = ""
+    policy_kind: str = ""
+    source: str = ""
+    locator: str = ""
+    policy_text: str = ""
+    exceptions: list[str] = Field(default_factory=list)
+    context_truncated: bool = False
 
 
 class AiSuggestion(BaseModel):
@@ -257,6 +316,7 @@ class AiSuggestion(BaseModel):
     at: str = ""
     evidence: list[RecommendationEvidence] = Field(default_factory=list)
     retrieval_version: str = ""
+    review_required: bool = False
 
 
 class ReceiptReview(BaseModel):

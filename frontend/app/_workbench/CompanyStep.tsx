@@ -6,6 +6,7 @@ import { api, type Account, type BankAccount, type Card, type Vendor, type Works
 import type { Notify } from "./Workbench";
 import StatementSetup, { type PendingImport } from "./StatementSetup";
 import MoneyInput from "./MoneyInput";
+import PolicyPanel from "./PolicyPanel";
 import s from "./workbench.module.css";
 
 const kinds: [Account["kind"], string][] = [["expense", "비용"], ["revenue", "수익"], ["asset", "자산"], ["liability", "부채"], ["equity", "자본"], ["other", "기타"]];
@@ -73,6 +74,7 @@ export default function CompanyStep({ workspace, onSaved, onTransactionsChanged,
   };
 
   return <>
+    <PolicyPanel accounts={workspace.accounts} notify={notify}/>
     <StatementSetup draft={draft} onApply={(next, files) => { setDraft(next); setPending(files); }} notify={notify}/>
     <section className={s.card}><div className={s.cardHeading}><h2>회사 · 회계 기간</h2><span>기본 정보</span></div><div className={s.fields}>
       <label>회사명<input value={draft.company} placeholder="예: 주식회사 더블락" onChange={e => set({ company: e.target.value })}/></label>

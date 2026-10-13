@@ -13,7 +13,7 @@ import re
 from app.models import EntryView, ReceiptRecord, RecommendationEvidence, Workspace
 from app.services.ledger import normalize_name
 
-VERSION = "relations-v1"
+VERSION = "relations-policy-v2"
 MAX_EVIDENCE = 8
 
 

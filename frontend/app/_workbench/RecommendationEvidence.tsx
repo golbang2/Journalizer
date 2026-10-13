@@ -38,7 +38,12 @@ function EvidenceItem({ evidence: e }: { evidence: Evidence }) {
     <small>{e.path.join(" → ")}</small>
     {e.sources.map((source, i) => <small key={i}>{source.file_name} · {source.sheet} · {source.row_number}행 · {source.date}</small>)}
     {e.source_type === "precedent" && !e.sources.length && <small>기존에 가져온 원장은 행 위치가 없습니다. 다시 가져오면 출처가 기록됩니다.</small>}
-    {e.source_type !== "precedent" && <button type="button" className={s.linkButton} disabled={busy} onClick={inspect}>{busy ? "불러오는 중…" : "현재 전표 확인"}</button>}
+    {e.source_type === "policy" && <>
+      <span>{e.policy_kind === "tax" ? "세무 참고" : "회계정책"} · 버전 {e.policy_version} · {e.source} · {e.locator}</span>
+      {!!e.exceptions?.length && <strong>예외 확인: {e.exceptions.join(", ")}</strong>}
+      <details><summary>추천 당시 정책 원문</summary><p style={{ whiteSpace: "pre-wrap" }}>{e.policy_text}</p></details>
+    </>}
+    {(e.source_type === "receipt" || e.source_type === "bank") && <button type="button" className={s.linkButton} disabled={busy} onClick={inspect}>{busy ? "불러오는 중…" : "현재 전표 확인"}</button>}
     {error && <span role="alert">{error}</span>}
     {current && <div className={s.evidenceCurrent}>
       <span>현재: {current.description} · {current.account} · {money(current.amount)}원 · {current.confirmed ? "확정" : "미확정·재검토"}</span>
@@ -51,10 +56,11 @@ function EvidenceItem({ evidence: e }: { evidence: Evidence }) {
 export default function RecommendationEvidence({ suggestion }: { suggestion: AiSuggestion }) {
   if (!suggestion.retrieval_version) return <p className={s.noteText}>이전 추천에는 사례 출처가 기록되지 않았습니다.</p>;
   const evidence = suggestion.evidence ?? [];
-  if (!evidence.length) return <p className={s.noteText}>관련 확정 사례를 찾지 못했습니다. 회사 기준과 거래 내용을 확인하세요.</p>;
+  if (!evidence.length) return <p className={s.noteText}>관련 정책·확정 사례를 찾지 못했습니다. 회사 기준과 거래 내용을 확인하세요.</p>;
   return <details className={s.recommendationEvidence}>
-    <summary>추천에 전달한 관련 사례 {evidence.length}건</summary>
+    <summary>추천에 전달한 정책·관련 사례 {evidence.length}건{suggestion.review_required ? " · 정책 검토 필요" : ""}</summary>
     <p>추천 당시의 자료입니다. 현재 전표와 다를 수 있으며, 추천 계정과 다른 사례도 비교용으로 포함됩니다.</p>
-    <ul>{evidence.map(e => <EvidenceItem key={`${e.source_type}:${e.source_id}`} evidence={e}/>)}</ul>
+    {suggestion.review_required && <p role="alert">정책 예외·세무 조건 또는 근거 충돌을 확인하세요. 자동 확정을 보류했습니다.</p>}
+    <ul>{evidence.map((e, i) => <EvidenceItem key={`${e.source_type}:${e.source_id}:${i}`} evidence={e}/>)}</ul>
   </details>;
 }
