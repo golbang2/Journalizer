@@ -12,6 +12,7 @@ import EntriesStep from "./EntriesStep";
 import OnboardingScreen from "./OnboardingScreen";
 import HomeStep from "./HomeStep";
 import s from "./workbench.module.css";
+import { retryStartup } from "./startup";
 
 const steps = [
   { title: "회사 기준", sub: "계정 · 거래처 · 기초잔액", icon: Building2, lead: "회사의 계정과 거래처를 기준으로 분개와 원장을 맞춥니다." },
@@ -30,14 +31,27 @@ export default function App() {
   const [me, setMe] = useState<Me | null | undefined>(undefined);
   const [bootError, setBootError] = useState("");
   const [loginError, setLoginError] = useState("");
+  const [startupRun, setStartupRun] = useState(0);
+  const [starting, setStarting] = useState(false);
 
   const check = useCallback(() => {
     setBootError("");
-    api.me().then(setMe).catch((e: ApiError) => {
-      if (e.status === 401) setMe(null);
-      else setBootError(e.message);
-    });
+    setStarting(false);
+    setStartupRun(run => run + 1);
   }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const hint = setTimeout(() => setStarting(true), 3_000);
+    retryStartup(signal => api.me(signal), controller.signal).then(user => {
+      if (!controller.signal.aborted) setMe(user);
+    }).catch((error: Error) => {
+      if (controller.signal.aborted) return;
+      if (error instanceof ApiError && error.status === 401) setMe(null);
+      else setBootError(error.message);
+    }).finally(() => clearTimeout(hint));
+    return () => { controller.abort(); clearTimeout(hint); };
+  }, [startupRun]);
 
   useEffect(() => {
     // Google sign-in failures come back as ?login_error=...
@@ -48,13 +62,12 @@ export default function App() {
       window.history.replaceState(null, "", window.location.pathname);
     }
     onUnauthorized(() => setMe(null));
-    check();
-  }, [check]);
+  }, []);
 
   if (bootError) {
-    return <div className={s.boot}><div className={s.bootCard}><strong>백엔드에 연결하지 못했습니다</strong><p>{bootError}</p><code>cd backend · .venv\Scripts\python -m uvicorn app.main:app --reload --port 8000</code><button className={s.primary} onClick={check}>다시 시도</button></div></div>;
+    return <div className={s.boot}><div className={s.bootCard} role="alert"><strong>서버에 연결하지 못했습니다</strong><p>{bootError}</p><button className={s.primary} onClick={check}>다시 시도</button></div></div>;
   }
-  if (me === undefined) return <div className={s.boot}><Loader2 className={s.spin} size={22}/> 불러오는 중</div>;
+  if (me === undefined) return <div className={s.boot}><div className={s.bootCard} role="status"><Loader2 className={s.spin} size={22}/><strong>{starting ? "서버를 시작하고 있습니다" : "연결하고 있습니다"}</strong><p>{starting ? "오랜만에 접속하면 준비에 1~2분 정도 걸릴 수 있습니다. 연결되면 자동으로 다음 화면으로 이동합니다." : "잠시만 기다려 주세요."}</p></div></div>;
   if (me === null) return <AuthScreen initialError={loginError} onSignedIn={signedIn => { setLoginError(""); setMe(signedIn); }}/>;
   const logout = async () => { await api.logout().catch(() => undefined); setMe(null); };
   if (!me.onboarded) return <OnboardingScreen onDone={() => setMe({ ...me, onboarded: true })} onLogout={logout}/>;
@@ -114,7 +127,7 @@ function Workbench({ me, onLogout }: { me: Me; onLogout: () => Promise<void> }) 
 
   if (!workspace) {
     return <div className={s.boot}>
-      {loadError ? <div className={s.bootCard}><strong>백엔드에 연결하지 못했습니다</strong><p>{loadError}</p><code>cd backend · uvicorn app.main:app --reload --port 8000</code><button className={s.primary} onClick={load}>다시 시도</button></div>
+      {loadError ? <div className={s.bootCard}><strong>서버에 연결하지 못했습니다</strong><p>{loadError}</p><button className={s.primary} onClick={load}>다시 시도</button></div>
         : <><Loader2 className={s.spin} size={22}/> 불러오는 중</>}
     </div>;
   }

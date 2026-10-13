@@ -47,6 +47,11 @@ npm run dev
 `http://localhost:8000`이 아니면 프론트엔드를 켤 때 `BACKEND_URL`을 지정한다.
 표는 서버 시작 시 자동으로 만들어진다.
 
+무료 서버가 절전 상태라면 첫 접속에서 서버 시작 안내를 표시하고 최대 2분간 자동으로 연결을
+재시도한다. 서버가 준비되면 로그인 또는 작업 화면으로 이동하며, 2분이 지나도 연결되지 않으면
+다시 시도 버튼을 표시한다. 이 재시도는 최초 로그인 상태 조회에만 적용된다.
+시작 연결 테스트는 Node.js 22.18 이상에서 `cd frontend` 후 `npm run test:startup`으로 실행한다.
+
 ## 환경 변수
 
 예시는 [backend/.env.example](backend/.env.example), [frontend/.env.local.example](frontend/.env.local.example)에 있다.

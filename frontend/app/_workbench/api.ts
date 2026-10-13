@@ -149,7 +149,7 @@ export const api = {
   hometaxReport: (start: string, end: string) => request<HometaxReport>(`/hometax/reconcile?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`),
   deleteHometax: (id: string) => request<void>(`/hometax/imports/${encodeURIComponent(id)}`, { method: "DELETE" }),
   linkHometax: (id: string, receiptId: string) => request<void>(`/hometax/rows/${encodeURIComponent(id)}/link`, json("PUT", { receipt_id: receiptId })),
-  me: () => request<Me>("/auth/me"),
+  me: (signal?: AbortSignal) => request<Me>("/auth/me", { signal }),
   authConfig: () => request<{ google: boolean }>("/auth/config"),
   signup: (email: string, password: string, name: string) => request<Me>("/auth/signup", json("POST", { email, password, name })),
   login: (email: string, password: string) => request<Me>("/auth/login", json("POST", { email, password })),
